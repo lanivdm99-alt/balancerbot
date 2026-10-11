@@ -30,25 +30,21 @@ function App() {
   const tick = useCallback(() => {
     if (!isRunning) return;
 
-    // Update prices
     priceEngine.current.tick();
     const currentPrices = priceEngine.current.getAllPrices();
     setPrices(currentPrices);
 
-    // Update gas
     gasSimulator.current.tick();
     setGasPrices({
       arbitrum: gasSimulator.current.getGas('arbitrum'),
       polygon: gasSimulator.current.getGas('polygon'),
     });
 
-    // Update block numbers
     setBlockNumbers(prev => ({
       arbitrum: prev.arbitrum + (Math.random() < 0.4 ? 1 : 0),
       polygon: prev.polygon + (Math.random() < 0.6 ? 1 : 0),
     }));
 
-    // Detect arbitrage
     const arbOpps = [
       ...detectArbitrage(currentPrices, 'arbitrum'),
       ...detectArbitrage(currentPrices, 'polygon'),
@@ -56,11 +52,10 @@ function App() {
 
     setOpportunities(arbOpps);
 
-    // Simulate execution in dry run mode
     tickRef.current++;
     if (isDryRun && tickRef.current % 3 === 0 && arbOpps.length > 0) {
       const opp = arbOpps[0];
-      const success = Math.random() > 0.15; // 85% success rate
+      const success = Math.random() > 0.15;
       const executedOpp = {
         ...opp,
         status: success ? 'success' as const : 'failed' as const,
@@ -70,7 +65,10 @@ function App() {
       pnlTracker.current.addEntry(
         executedOpp.netProfit,
         executedOpp.chain,
-        executedOpp.pair.join('/')
+        executedOpp.pair.join('/'),
+        executedOpp.strategy,
+        executedOpp.gasCost,
+        executedOpp.mevShareTip
       );
 
       setExecutionHistory(prev => [executedOpp, ...prev].slice(0, 50));
@@ -82,7 +80,6 @@ function App() {
     return () => clearInterval(interval);
   }, [tick]);
 
-  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'p' || e.key === 'P') {
@@ -103,18 +100,10 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-black text-green-400 font-mono overflow-hidden">
-      {/* Scanline effect */}
-      <div className="fixed inset-0 pointer-events-none z-50 opacity-[0.03]"
-        style={{
-          background: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,255,0,0.1) 2px, rgba(0,255,0,0.1) 4px)'
-        }}
-      />
-
+    <div className="min-h-screen overflow-hidden">
       <Header isRunning={isRunning} isDryRun={isDryRun} />
 
-      {/* Tab Navigation */}
-      <div className="border-b border-green-900/50 px-4">
+      <div className="border-b border-pink-500/30 px-4">
         <div className="flex gap-1">
           {(['dashboard', 'contracts', 'docs'] as const).map(tab => (
             <button
@@ -122,8 +111,8 @@ function App() {
               onClick={() => setActiveTab(tab)}
               className={`px-4 py-2 text-sm uppercase tracking-wider transition-all ${
                 activeTab === tab
-                  ? 'text-cyan-400 border-b-2 border-cyan-400 bg-cyan-400/5'
-                  : 'text-green-600 hover:text-green-400'
+                  ? 'neon-button-cyan text-xs'
+                  : 'text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10'
               }`}
             >
               {tab === 'dashboard' ? '⌘ Terminal' : tab === 'contracts' ? '◈ Contracts' : '⊞ Docs'}
@@ -134,7 +123,6 @@ function App() {
 
       {activeTab === 'dashboard' && (
         <div className="p-3 pb-8 grid grid-cols-12 gap-3 h-[calc(100vh-120px)]">
-          {/* Left Column - Controls & Network */}
           <div className="col-span-3 flex flex-col gap-3 overflow-y-auto">
             <ControlPanel
               isRunning={isRunning}
@@ -150,14 +138,12 @@ function App() {
             <GasTracker gasPrices={gasPrices} />
           </div>
 
-          {/* Center Column - Main Data */}
           <div className="col-span-6 flex flex-col gap-3 overflow-y-auto">
             <PriceMatrix prices={prices} />
             <ArbOpportunities opportunities={opportunities} />
             <ExecutionLog history={executionHistory} />
           </div>
 
-          {/* Right Column - PnL */}
           <div className="col-span-3 flex flex-col gap-3 overflow-y-auto">
             <PnLDashboard tracker={pnlTracker.current} />
           </div>
@@ -181,14 +167,15 @@ function App() {
 function DocsViewer() {
   return (
     <div className="p-6 max-w-4xl mx-auto overflow-y-auto h-[calc(100vh-120px)]">
-      <h2 className="text-2xl text-cyan-400 mb-6">⊞ System Documentation</h2>
+      <h2 className="text-2xl neon-fluffy-cyan mb-6">⊞ System Documentation</h2>
 
       <div className="space-y-6 text-sm">
-        <section className="border border-green-900/50 rounded p-4">
-          <h3 className="text-lg text-yellow-400 mb-3">▸ Architecture Overview</h3>
-          <pre className="text-green-300 whitespace-pre-wrap leading-relaxed">
+        <section className="fluffy-box-pink p-4">
+          <h3 className="text-lg neon-fluffy-yellow mb-3">▸ Architecture Overview</h3>
+          <pre className="text-cyan-300 whitespace-pre-wrap leading-relaxed text-xs">
 {`┌─────────────────────────────────────────────────────────────┐
-│                    FLASH-X ARBITRAGE SYSTEM                   │
+│              FLASH-X NEON ARBITRAGE SYSTEM                    │
+│              Multi-Chain MEV Infrastructure                   │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐  │
@@ -202,17 +189,51 @@ function DocsViewer() {
 │  │  Aggregator  │    │  (Min Profit)│    │  Vault Flash │  │
 │  └──────────────┘    └──────────────┘    └──────────────┘  │
 │                                                              │
+│  Strategies: Simple Arb ◈ Triangular ◈ Cross-Chain ◈ MEV   │
 │  Chains: Arbitrum One ◈ Polygon PoS                         │
 │  DEXs: Balancer V3, Uniswap V3, SushiSwap, Camelot, QS     │
 └─────────────────────────────────────────────────────────────┘`}
           </pre>
         </section>
 
-        <section className="border border-green-900/50 rounded p-4">
-          <h3 className="text-lg text-yellow-400 mb-3">▸ Deployment Guide</h3>
-          <div className="space-y-3 text-green-300">
+        <section className="fluffy-box-cyan p-4">
+          <h3 className="text-lg neon-fluffy-green mb-3">▸ Advanced Bot Strategies</h3>
+          <div className="space-y-3 text-cyan-300">
             <div>
-              <p className="text-cyan-400">1. Local Simulation (Dry Run):</p>
+              <p className="neon-fluffy-pink">1. Flashbots MEV-Share Integration:</p>
+              <code className="block bg-black/50 p-2 mt-1 rounded text-xs">
+                - Private transaction pools (no public mempool exposure){'\n'}
+                - Backrunning strategy: place txs after price-moving trades{'\n'}
+                - Optimal validator tips: 75-90% of profit in competitive env{'\n'}
+                - Bundle submission with flash loan protection
+              </code>
+            </div>
+            <div>
+              <p className="neon-fluffy-pink">2. Optimal Trade Sizing (AMM Math):</p>
+              <code className="block bg-black/50 p-2 mt-1 rounded text-xs">
+                - Square root formula for optimal trade amount{'\n'}
+                - profit = (spread - fees) * tradeSize - gasCost{'\n'}
+                - tradeSize = sqrt(reserve_in * reserve_out * fee^2){'\n'}
+                - Liquidity-weighted sizing to minimize slippage
+              </code>
+            </div>
+            <div>
+              <p className="neon-fluffy-pink">3. Multi-Strategy Scanner:</p>
+              <code className="block bg-black/50 p-2 mt-1 rounded text-xs">
+                - Simple 2-hop arbitrage (buy low, sell high){'\n'}
+                - Triangular arbitrage (A→B→C→A cycles){'\n'}
+                - Cross-chain arbitrage (Arbitrum ↔ Polygon){'\n'}
+                - Flashbots bundles with MEV-Share kickback
+              </code>
+            </div>
+          </div>
+        </section>
+
+        <section className="fluffy-box-green p-4">
+          <h3 className="text-lg neon-fluffy-yellow mb-3">▸ Deployment Guide</h3>
+          <div className="space-y-3 text-cyan-300">
+            <div>
+              <p className="neon-fluffy-cyan">1. Local Simulation (Dry Run):</p>
               <code className="block bg-black/50 p-2 mt-1 rounded text-xs">
                 $ cp .env.example .env{'\n'}
                 $ npm run simulate{'\n'}
@@ -220,30 +241,34 @@ function DocsViewer() {
               </code>
             </div>
             <div>
-              <p className="text-cyan-400">2. Testnet Testing:</p>
+              <p className="neon-fluffy-cyan">2. Testnet Testing:</p>
               <code className="block bg-black/50 p-2 mt-1 rounded text-xs">
                 $ forge script script/Deploy.s.sol --rpc-url $ARB_SEPOLIA_RPC --broadcast{'\n'}
                 $ npm run bot -- --network arbitrum-sepolia --dry-run
               </code>
             </div>
             <div>
-              <p className="text-cyan-400">3. Mainnet Live:</p>
+              <p className="neon-fluffy-cyan">3. Mainnet Live:</p>
               <code className="block bg-black/50 p-2 mt-1 rounded text-xs">
                 $ forge script script/Deploy.s.sol --rpc-url $ARB_MAINNET_RPC --broadcast --verify{'\n'}
-                $ npm run bot -- --network arbitrum --live
+                $ npm run bot -- --network arbitrum --live --flashbots
               </code>
             </div>
           </div>
         </section>
 
-        <section className="border border-green-900/50 rounded p-4">
-          <h3 className="text-lg text-yellow-400 mb-3">▸ Environment Variables (.env)</h3>
-          <pre className="text-green-300 whitespace-pre-wrap text-xs bg-black/50 p-3 rounded">
-{`# RPC Providers
+        <section className="fluffy-box-yellow p-4">
+          <h3 className="text-lg neon-fluffy-pink mb-3">▸ Environment Variables (.env)</h3>
+          <pre className="text-cyan-300 whitespace-pre-wrap text-xs bg-black/50 p-3 rounded">
+{`# RPC Providers (Use private endpoints for low latency)
 ARB_RPC_URL=https://arb-mainnet.g.alchemy.com/v2/YOUR_KEY
 ARB_WSS_URL=wss://arb-mainnet.g.alchemy.com/v2/YOUR_KEY
 POL_RPC_URL=https://polygon-mainnet.g.alchemy.com/v2/YOUR_KEY
 POL_WSS_URL=wss://polygon-mainnet.g.alchemy.com/v2/YOUR_KEY
+
+# Flashbots (for private transaction submission)
+FLASHBOTS_AUTH_SIGNER=0x...
+FLASHBOTS_RELAY_URL=https://relay.flashbots.net
 
 # Wallet (USE A DEDICATED HOT WALLET)
 PRIVATE_KEY=0x...
@@ -258,25 +283,13 @@ MIN_PROFIT_USD=5.00
 MAX_GAS_GWEI=100
 SCAN_INTERVAL_MS=500
 DRY_RUN=true
+USE_FLASHBOTS=true
+MEV_TIP_PERCENTAGE=80
 
 # Alerting
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_CHAT_ID=...`}
           </pre>
-        </section>
-
-        <section className="border border-green-900/50 rounded p-4">
-          <h3 className="text-lg text-yellow-400 mb-3">▸ Risk Guardrails</h3>
-          <ul className="list-disc list-inside space-y-1 text-green-300">
-            <li>Minimum net profit threshold enforced on-chain (reverts if unprofitable)</li>
-            <li>Flash loan fee: 0 bps (Balancer V3 free flash loans)</li>
-            <li>Maximum slippage tolerance: 0.5% per swap leg</li>
-            <li>Atomic execution: entire tx reverts if any step fails</li>
-            <li>ReentrancyGuard on all external calls</li>
-            <li>Ownable access control with multi-sig recommendation</li>
-            <li>Emergency sweep function for stuck tokens</li>
-            <li>Gas price ceiling to prevent overpaying during congestion</li>
-          </ul>
         </section>
       </div>
     </div>

@@ -10,16 +10,16 @@ export default function PriceMatrix({ prices }: PriceMatrixProps) {
   const dexList = Array.from(allDexs);
 
   return (
-    <div className="border border-green-900/50 rounded p-3">
-      <h3 className="text-xs uppercase tracking-wider text-cyan-400 mb-3 flex items-center gap-2">
+    <div className="fluffy-box-cyan p-3">
+      <h3 className="text-xs uppercase tracking-wider neon-fluffy-pink mb-3 flex items-center gap-2">
         <span>◎</span> Price Matrix
-        <span className="text-[10px] text-green-700 ml-auto">Live Aggregation</span>
+        <span className="text-[10px] text-pink-400 ml-auto">Live Aggregation</span>
       </h3>
 
       <div className="overflow-x-auto">
         <table className="w-full text-[10px]">
           <thead>
-            <tr className="text-green-600 border-b border-green-900/30">
+            <tr className="text-pink-400 border-b border-cyan-500/30">
               <th className="text-left py-1 px-1">Token</th>
               {dexList.map(dex => (
                 <th key={dex} className="text-right py-1 px-1">{dex.split(' ')[0]}</th>
@@ -35,16 +35,16 @@ export default function PriceMatrix({ prices }: PriceMatrixProps) {
               const spread = maxPrice > 0 ? ((maxPrice - minPrice) / minPrice) * 10000 : 0;
 
               return (
-                <tr key={token.symbol} className="border-b border-green-900/20 hover:bg-green-500/5">
+                <tr key={token.symbol} className="border-b border-cyan-500/20 hover:bg-cyan-500/10">
                   <td className="py-1 px-1">
-                    <span className="text-green-300 font-bold">{token.symbol}</span>
+                    <span className="text-cyan-300 font-bold">{token.symbol}</span>
                     {spread > 5 && (
-                      <span className="ml-1 text-yellow-400 text-[8px]">▲{spread.toFixed(1)}bps</span>
+                      <span className="ml-1 neon-fluffy-yellow text-[8px]">▲{spread.toFixed(1)}bps</span>
                     )}
                   </td>
                   {dexList.map(dex => {
                     const price = tokenPrices[dex];
-                    if (!price) return <td key={dex} className="text-right py-1 px-1 text-green-800">—</td>;
+                    if (!price) return <td key={dex} className="text-right py-1 px-1 text-pink-400/50">—</td>;
 
                     const isMin = price === minPrice;
                     const isMax = price === maxPrice;
@@ -53,7 +53,7 @@ export default function PriceMatrix({ prices }: PriceMatrixProps) {
                       <td
                         key={dex}
                         className={`text-right py-1 px-1 font-mono ${
-                          isMin ? 'text-green-400' : isMax ? 'text-red-400' : 'text-green-500'
+                          isMin ? 'neon-fluffy-green' : isMax ? 'neon-fluffy-pink' : 'text-cyan-300'
                         }`}
                       >
                         {price < 10 ? price.toFixed(4) : price < 100 ? price.toFixed(3) : price.toFixed(2)}
@@ -67,11 +67,10 @@ export default function PriceMatrix({ prices }: PriceMatrixProps) {
         </table>
       </div>
 
-      {/* Legend */}
       <div className="flex gap-4 mt-2 text-[9px]">
-        <span className="text-green-400">■ Lowest</span>
-        <span className="text-red-400">■ Highest</span>
-        <span className="text-yellow-400">▲ Spread &gt; 5bps</span>
+        <span className="neon-fluffy-green">■ Lowest</span>
+        <span className="neon-fluffy-pink">■ Highest</span>
+        <span className="neon-fluffy-yellow">▲ Spread &gt; 5bps</span>
       </div>
     </div>
   );

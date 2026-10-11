@@ -15,43 +15,27 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
  * @notice Multi-hop atomic arbitrage executor via Balancer V3 flash loans
  * @dev Interfaces with Balancer V3 Vault singleton for zero-fee flash loans
  *      Executes multi-DEX swaps atomically with strict profit guardrails
+ *      Integrates Flashbots MEV-Share for private transaction submission
  */
 contract FlashArbX is IFlashLoanReceiver, ReentrancyGuard, Ownable {
     using SafeERC20 for IERC20;
 
-    // ═══════════════════════════════════════════════════════════
-    //                         STATE
-    // ═══════════════════════════════════════════════════════════
-
     IVault public immutable vault;
-    
-    // Authorized execution bots
     mapping(address => bool) public authorizedBots;
-    
-    // Minimum net profit in wei (configurable per token)
     mapping(address => uint256) public minProfit;
-    
-    // Emergency pause
     bool public paused;
-
-    // ═══════════════════════════════════════════════════════════
-    //                         EVENTS
-    // ═══════════════════════════════════════════════════════════
 
     event ArbitrageExecuted(
         address indexed token,
         uint256 flashAmount,
         uint256 profit,
-        address[] route
+        address[] route,
+        uint256 mevTip
     );
     
     event BotAuthorization(address indexed bot, bool authorized);
     event MinProfitSet(address indexed token, uint256 minProfit);
     event EmergencySweep(address indexed token, uint256 amount);
-
-    // ═══════════════════════════════════════════════════════════
-    //                       MODIFIERS
-    // ═══════════════════════════════════════════════════════════
 
     modifier onlyBot() {
         require(
@@ -66,43 +50,26 @@ contract FlashArbX is IFlashLoanReceiver, ReentrancyGuard, Ownable {
         _;
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //                      CONSTRUCTOR
-    // ═══════════════════════════════════════════════════════════
-
     constructor(address _vault) Ownable(msg.sender) {
         vault = IVault(_vault);
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //                   FLASH LOAN ENTRY
-    // ═══════════════════════════════════════════════════════════
-
-    /**
-     * @notice Initiate a flash loan arbitrage
-     * @param tokens Array of tokens to borrow
-     * @param amounts Array of amounts to borrow
-     * @param route Encoded swap route data
-     */
     function executeArbitrage(
         address[] calldata tokens,
         uint256[] calldata amounts,
         bytes calldata route
     ) external onlyBot whenNotPaused nonReentrant {
-        // Decode route for validation
         (
             address[] memory dexRouters,
             bytes[] memory swapData,
             uint256 minNetProfit
         ) = abi.decode(route, (address[], bytes[], uint256));
 
-        // Enforce minimum profit per token
         require(
             minNetProfit >= minProfit[tokens[0]],
             "FlashArbX: below min profit threshold"
         );
 
-        // Request flash loan from Balancer V3 Vault
         vault.flashLoan(
             this,
             tokens,
@@ -111,14 +78,6 @@ contract FlashArbX is IFlashLoanReceiver, ReentrancyGuard, Ownable {
         );
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //               FLASH LOAN CALLBACK
-    // ═══════════════════════════════════════════════════════════
-
-    /**
-     * @notice Called by Balancer V3 Vault during flash loan
-     * @dev Executes the multi-hop swap route and validates profit
-     */
     function receiveFlashLoan(
         address[] memory tokens,
         uint256[] memory amounts,
@@ -127,7 +86,6 @@ contract FlashArbX is IFlashLoanReceiver, ReentrancyGuard, Ownable {
     ) external override nonReentrant {
         require(msg.sender == address(vault), "FlashArbX: only vault");
 
-        // Decode execution parameters
         (
             address[] memory dexRouters,
             bytes[] memory swapData,
@@ -135,7 +93,6 @@ contract FlashArbX is IFlashLoanReceiver, ReentrancyGuard, Ownable {
             address profitToken
         ) = abi.decode(userData, (address[], bytes[], uint256, address));
 
-        // Record balance before swaps
         uint256 balanceBefore = IERC20(profitToken).balanceOf(address(this));
 
         // Execute multi-hop swaps across DEXs
@@ -143,7 +100,6 @@ contract FlashArbX is IFlashLoanReceiver, ReentrancyGuard, Ownable {
             _executeSwap(dexRouters[i], swapData[i]);
         }
 
-        // Calculate net profit
         uint256 balanceAfter = IERC20(profitToken).balanceOf(address(this));
         uint256 totalFees = 0;
         for (uint256 i = 0; i < feeAmounts.length; i++) {
@@ -163,21 +119,17 @@ contract FlashArbX is IFlashLoanReceiver, ReentrancyGuard, Ownable {
             IERC20(tokens[i]).forceApprove(address(vault), amounts[i] + feeAmounts[i]);
         }
 
-        emit ArbitrageExecuted(profitToken, amounts[0], netProfit, dexRouters);
-    }
+        // MEV-Share tip to block builder
+        uint256 mevTip = netProfit * 80 / 100; // 80% to builder
+        block.coinbase.transfer(mevTip);
 
-    // ═══════════════════════════════════════════════════════════
-    //                   SWAP EXECUTION
-    // ═══════════════════════════════════════════════════════════
+        emit ArbitrageExecuted(profitToken, amounts[0], netProfit, dexRouters, mevTip);
+    }
 
     function _executeSwap(address router, bytes memory swapData) internal {
         (bool success, bytes memory returnData) = router.call(swapData);
         require(success, string(abi.encodePacked("FlashArbX: swap failed: ", returnData)));
     }
-
-    // ═══════════════════════════════════════════════════════════
-    //                    ADMIN FUNCTIONS
-    // ═══════════════════════════════════════════════════════════
 
     function setBotAuthorization(address bot, bool authorized) external onlyOwner {
         authorizedBots[bot] = authorized;
@@ -212,8 +164,9 @@ const SCANNER_CODE = `/**
  * Architecture:
  * - WebSocket RPC connections for real-time mempool monitoring
  * - Multi-chain price aggregation across all integrated DEXs
+ * - Flashbots MEV-Share integration for private transactions
+ * - Optimal trade sizing using AMM mathematical formulas
  * - Local state simulation via Anvil/Hardhat for dry-run mode
- * - Gas-optimized transaction construction with Flashbots protection
  */
 
 import { WebSocket } from 'ws';
@@ -229,16 +182,6 @@ interface ChainConfig {
   dexRouters: Record<string, string>;
 }
 
-interface PriceQuote {
-  tokenIn: string;
-  tokenOut: string;
-  dex: string;
-  amountIn: bigint;
-  amountOut: bigint;
-  price: number;
-  timestamp: number;
-}
-
 interface ArbOpportunity {
   chain: string;
   pair: [string, string];
@@ -251,17 +194,9 @@ interface ArbOpportunity {
   gasCost: number;
   netProfit: number;
   flashLoanAmount: bigint;
-  route: RouteStep[];
-}
-
-interface RouteStep {
-  router: string;
-  tokenIn: string;
-  tokenOut: string;
-  amountIn: bigint;
-  minAmountOut: bigint;
-  dex: string;
-  poolFee: number;
+  optimalTradeSize: number;
+  strategy: 'simple' | 'triangular' | 'cross-chain' | 'flashbots';
+  mevShareTip: number;
 }
 
 class FlashArbScanner {
@@ -269,6 +204,7 @@ class FlashArbScanner {
   private priceCache: Map<string, Map<string, PriceQuote[]>> = new Map();
   private isRunning: boolean = false;
   private isDryRun: boolean = true;
+  private flashbotsEnabled: boolean = true;
   
   constructor(private configs: ChainConfig[]) {
     this.initializeProviders();
@@ -279,12 +215,10 @@ class FlashArbScanner {
       const provider = new ethers.WebSocketProvider(config.wssUrl);
       this.providers.set(config.name, provider);
       
-      // Subscribe to new blocks
       provider.on('block', async (blockNumber: number) => {
         await this.onNewBlock(config.name, blockNumber);
       });
 
-      // Subscribe to pending transactions (mempool)
       provider.on('pending', async (txHash: string) => {
         await this.onPendingTx(config.name, txHash);
       });
@@ -292,10 +226,7 @@ class FlashArbScanner {
   }
 
   private async onNewBlock(chain: string, blockNumber: number) {
-    // Refresh all price quotes on new block
     await this.refreshPrices(chain);
-    
-    // Scan for arbitrage opportunities
     const opportunities = this.scanArbitrage(chain);
     
     for (const opp of opportunities) {
@@ -309,21 +240,26 @@ class FlashArbScanner {
     }
   }
 
-  private async refreshPrices(chain: string) {
-    const config = this.configs.find(c => c.name === chain)!;
-    const provider = this.providers.get(chain)!;
+  /**
+   * Calculate optimal trade size using AMM math
+   * Based on Flashbots simple-blind-arbitrage formula
+   */
+  private calculateOptimalTradeSize(
+    spreadBps: number,
+    buyDexFee: number,
+    sellDexFee: number,
+    availableLiquidity: number
+  ): number {
+    const netSpread = (spreadBps - buyDexFee - sellDexFee) / 10000;
+    if (netSpread <= 0) return 0;
     
-    // Query all DEX routers for current prices
-    for (const [dex, router] of Object.entries(config.dexRouters)) {
-      for (const pair of this.getTradingPairs()) {
-        try {
-          const quote = await this.getQuote(provider, router, pair, dex);
-          this.updatePriceCache(chain, pair, dex, quote);
-        } catch (err) {
-          continue;
-        }
-      }
-    }
+    // Square root formula for optimal sizing
+    const optimalSize = Math.min(
+      availableLiquidity * 0.1,
+      Math.sqrt(availableLiquidity * netSpread * 1000)
+    );
+    
+    return Math.max(0, optimalSize);
   }
 
   private scanArbitrage(chain: string): ArbOpportunity[] {
@@ -343,10 +279,21 @@ class FlashArbScanner {
       const netSpreadBps = spreadBps - totalFeesBps;
       
       if (netSpreadBps > 3) {
-        const flashAmount = this.getOptimalFlashAmount(bestBuy, netSpreadBps);
+        const optimalSize = this.calculateOptimalTradeSize(
+          netSpreadBps,
+          this.getDexFee(bestBuy.dex),
+          this.getDexFee(bestSell.dex),
+          100000 // Available liquidity
+        );
+        
+        const flashAmount = optimalSize || BigInt(10e18);
         const grossProfit = (netSpreadBps / 10000) * Number(flashAmount);
         const gasCost = await this.estimateGasCost(chain);
-        const netProfit = grossProfit - gasCost;
+        
+        // MEV-Share tip calculation (competitive environment)
+        const mevTipPercentage = 0.75 + Math.random() * 0.15;
+        const mevShareTip = grossProfit * mevTipPercentage;
+        const netProfit = grossProfit - gasCost - mevShareTip;
 
         if (netProfit > 0) {
           opportunities.push({
@@ -361,7 +308,9 @@ class FlashArbScanner {
             gasCost,
             netProfit,
             flashLoanAmount: flashAmount,
-            route: this.buildRoute(bestBuy, bestSell, flashAmount),
+            optimalTradeSize: optimalSize,
+            strategy: this.flashbotsEnabled ? 'flashbots' : 'simple',
+            mevShareTip,
           });
         }
       }
@@ -377,32 +326,53 @@ class FlashArbScanner {
 
     const tokens = [this.getTokenAddress(opp.pair[0])];
     const amounts = [opp.flashLoanAmount];
-    const route = this.encodeRoute(opp.route);
+    const route = this.encodeRoute(opp);
 
-    try {
+    if (this.flashbotsEnabled) {
+      // Submit via Flashbots for private execution
+      await this.submitFlashbotsBundle(contract, tokens, amounts, route);
+    } else {
+      // Direct execution (public mempool)
       const tx = await contract.executeArbitrage(tokens, amounts, route, {
         gasLimit: 500000,
         maxFeePerGas: ethers.parseUnits(this.getMaxGasGwei(), 'gwei'),
         maxPriorityFeePerGas: ethers.parseUnits('2', 'gwei'),
       });
-
-      const receipt = await tx.wait();
-      console.log('[EXEC] SUCCESS: ' + opp.chain + ' ' + opp.pair.join('/'));
-    } catch (err) {
-      console.error('[EXEC] FAILED: ' + opp.chain + ' ' + opp.pair.join('/'));
+      await tx.wait();
     }
   }
 
-  private async simulateExecution(opp: ArbOpportunity) {
-    const success = Math.random() > 0.15;
-    const profit = success ? opp.netProfit : -opp.gasCost * 0.1;
-    console.log('[SIM] ' + (success ? 'PASS' : 'FAIL') + ' ' + opp.chain + ' $' + profit.toFixed(4));
+  private async submitFlashbotsBundle(
+    contract: any,
+    tokens: string[],
+    amounts: bigint[],
+    route: string
+  ) {
+    // Flashbots bundle submission logic
+    const signedBundle = await this.flashbotsProvider.signBundle([
+      {
+        transaction: await contract.executeArbitrage.populateTransaction(
+          tokens,
+          amounts,
+          route
+        ),
+        signers: [this.wallet],
+      }
+    ]);
+    
+    const bundleReceipt = await this.flashbotsProvider.sendRawBundle(
+      signedBundle,
+      await this.provider.getBlockNumber() + 1
+    );
+    
+    console.log('[FLASHBOTS] Bundle submitted:', bundleReceipt.bundleHash);
   }
 
   async start() {
     this.isRunning = true;
     console.log('[FLASH-X] Scanner started across ' + this.configs.length + ' chains');
     console.log('[FLASH-X] Mode: ' + (this.isDryRun ? 'DRY RUN' : 'LIVE'));
+    console.log('[FLASH-X] Flashbots: ' + (this.flashbotsEnabled ? 'ENABLED' : 'DISABLED'));
   }
 
   async stop() {
@@ -414,7 +384,6 @@ class FlashArbScanner {
   }
 }
 
-// Initialize and run
 const scanner = new FlashArbScanner([
   {
     name: 'arbitrum',
@@ -453,24 +422,24 @@ export default function ContractViewer() {
   return (
     <div className="p-4 h-[calc(100vh-120px)] flex flex-col">
       <div className="flex items-center gap-4 mb-4">
-        <h2 className="text-lg text-cyan-400">◈ Source Code</h2>
+        <h2 className="text-lg neon-fluffy-cyan">◈ Source Code</h2>
         <div className="flex gap-2">
           <button
             onClick={() => setActiveContract('flashArb')}
-            className={`px-3 py-1 text-xs rounded border ${
+            className={`px-3 py-1 text-xs rounded-lg transition-all ${
               activeContract === 'flashArb'
-                ? 'border-cyan-500/50 text-cyan-400 bg-cyan-500/10'
-                : 'border-green-900/50 text-green-600 hover:text-green-400'
+                ? 'neon-button-cyan'
+                : 'border border-cyan-500/50 text-cyan-400 hover:bg-cyan-500/10'
             }`}
           >
             FlashArbX.sol
           </button>
           <button
             onClick={() => setActiveContract('scanner')}
-            className={`px-3 py-1 text-xs rounded border ${
+            className={`px-3 py-1 text-xs rounded-lg transition-all ${
               activeContract === 'scanner'
-                ? 'border-cyan-500/50 text-cyan-400 bg-cyan-500/10'
-                : 'border-green-900/50 text-green-600 hover:text-green-400'
+                ? 'neon-button-pink'
+                : 'border border-pink-500/50 text-pink-400 hover:bg-pink-500/10'
             }`}
           >
             Scanner.ts
@@ -478,8 +447,8 @@ export default function ContractViewer() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto border border-green-900/50 rounded bg-black/50">
-        <pre className="p-4 text-[11px] leading-relaxed text-green-300 whitespace-pre-wrap font-mono">
+      <div className="flex-1 overflow-auto fluffy-box-cyan">
+        <pre className="p-4 text-[11px] leading-relaxed text-cyan-300 whitespace-pre-wrap font-mono">
           {activeContract === 'flashArb' ? FLASH_ARB_CONTRACT : SCANNER_CODE}
         </pre>
       </div>
