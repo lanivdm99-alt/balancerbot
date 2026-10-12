@@ -10,8 +10,11 @@ import {
   GAME_CONFIG,
   GameState,
   INITIAL_GAME_STATE,
+  Monster,
 } from './services/blockchain';
 import PerformanceMetrics from './components/PerformanceMetrics';
+import FluffyMonster, { MonsterCollection } from './components/FluffyMonster';
+import BotLeaderboard from './components/BotLeaderboard';
 
 const CONTRACT_CODE = `// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
@@ -435,11 +438,73 @@ function App() {
         xp: prev.xp + (success ? GAME_CONFIG.xpPerWin : GAME_CONFIG.xpPerTrade / 2),
         tradesThisMinute: prev.tradesThisMinute + 1,
         lastTradeTime: Date.now(),
+        // Track flash loan usage (flash loans are FREE!)
+        flashLoanUsed: prev.flashLoanUsed + opp.flashLoanAmount,
+        flashLoanProfit: success ? prev.flashLoanProfit + profit : prev.flashLoanProfit,
       };
 
       // Big win bonus XP
       if (profit > 0.10) {
         newState.xp += GAME_CONFIG.xpPerBigWin;
+      }
+
+      // Update monsters (they gain XP from trades)
+      newState.monsters = prev.monsters.map(monster => ({
+        ...monster,
+        xp: monster.xp + (success ? 10 : 2),
+        level: Math.floor((monster.xp + (success ? 10 : 2)) / 100) + 1,
+      }));
+
+      // Unlock new monsters based on achievements
+      if (newState.totalTrades >= 10 && !newState.monsters.find(m => m.type === 'arb')) {
+        newState.monsters.push({
+          type: 'arb',
+          level: 1,
+          xp: 0,
+          color: '#00ffff',
+          unlocked: true,
+        });
+        showNotification('🎉 New Monster Unlocked: Arb Alien!', 'achievement');
+      }
+      if (newState.totalTrades >= 25 && !newState.monsters.find(m => m.type === 'mev')) {
+        newState.monsters.push({
+          type: 'mev',
+          level: 1,
+          xp: 0,
+          color: '#ff00ff',
+          unlocked: true,
+        });
+        showNotification('🎉 New Monster Unlocked: MEV Monster!', 'achievement');
+      }
+      if (newState.totalTrades >= 50 && !newState.monsters.find(m => m.type === 'gas')) {
+        newState.monsters.push({
+          type: 'gas',
+          level: 1,
+          xp: 0,
+          color: '#ffff00',
+          unlocked: true,
+        });
+        showNotification('🎉 New Monster Unlocked: Gas Ghost!', 'achievement');
+      }
+      if (newState.totalTrades >= 100 && !newState.monsters.find(m => m.type === 'pool')) {
+        newState.monsters.push({
+          type: 'pool',
+          level: 1,
+          xp: 0,
+          color: '#00ff41',
+          unlocked: true,
+        });
+        showNotification('🎉 New Monster Unlocked: Pool Panda!', 'achievement');
+      }
+      if (newState.totalTrades >= 200 && !newState.monsters.find(m => m.type === 'swap')) {
+        newState.monsters.push({
+          type: 'swap',
+          level: 1,
+          xp: 0,
+          color: '#bf00ff',
+          unlocked: true,
+        });
+        showNotification('🎉 New Monster Unlocked: Swap Serpent!', 'achievement');
       }
 
       // Calculate level
@@ -1192,12 +1257,18 @@ function App() {
               </div>
             </div>
 
-            {/* Flash Loans */}
+            {/* Flash Loans - FREE MONEY! */}
             <div className="box-green p-3">
               <h3 className="text-xs uppercase tracking-wider shock-yellow mb-2 font-bold">
-                💰 Free Flash Loans
+                💰 Flash Loans = FREE Capital!
               </h3>
-              <div className="space-y-1">
+              <div className="text-[10px] shock-cyan mb-2">
+                <p className="font-bold shock-green">💡 How it works:</p>
+                <p className="mt-1">Borrow MILLIONS with ZERO collateral!</p>
+                <p className="mt-1">Only pay gas (~$0.005) + keep 10% profit</p>
+                <p className="mt-1 shock-yellow font-bold">90% goes to validators (MEV tip)</p>
+              </div>
+              <div className="space-y-1 mb-2">
                 {Object.entries(FLASH_LOAN_PROVIDERS).map(([key, provider]) => (
                   <div key={key} className="text-[10px] border border-green-500/30 rounded p-1">
                     <div className="flex justify-between">
@@ -1209,7 +1280,40 @@ function App() {
                   </div>
                 ))}
               </div>
+              <div className="border-t border-green-500/30 pt-2 space-y-1 text-[10px]">
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Total Borrowed:</span>
+                  <span className="shock-green font-bold">${gameState.flashLoanUsed.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Profit from Flash:</span>
+                  <span className="shock-green font-bold">${gameState.flashLoanProfit.toFixed(4)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">ROI:</span>
+                  <span className="shock-yellow font-bold">
+                    {gameState.flashLoanUsed > 0 
+                      ? `${((gameState.flashLoanProfit / gameState.flashLoanUsed) * 100).toFixed(4)}%`
+                      : '0%'}
+                  </span>
+                </div>
+              </div>
             </div>
+
+            {/* Monster Collection */}
+            <MonsterCollection monsters={gameState.monsters} />
+
+            {/* Bot Leaderboard */}
+            <BotLeaderboard 
+              yourStats={{
+                speed: performanceMetrics.avgScanTime ? Number(performanceMetrics.avgScanTime) : 3000,
+                successRate: gameState.totalTrades > 0 
+                  ? (gameState.wins / gameState.totalTrades) * 100 
+                  : 0,
+                profit: gameState.capital - GAME_CONFIG.startingCapital,
+                trades: gameState.totalTrades,
+              }}
+            />
 
             {/* DEX Coverage */}
             <div className="box-purple p-3">

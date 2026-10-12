@@ -201,6 +201,14 @@ export interface ArbOpportunity {
   confidence: number;
 }
 
+export interface Monster {
+  type: string;
+  level: number;
+  xp: number;
+  color: string;
+  unlocked: boolean;
+}
+
 export interface GameState {
   capital: number;
   xp: number;
@@ -216,6 +224,9 @@ export interface GameState {
   arbitrumUnlocked: boolean;
   tradesThisMinute: number;
   lastTradeTime: number;
+  monsters: Monster[];
+  flashLoanUsed: number; // Total flash loan amount used
+  flashLoanProfit: number; // Profit from flash loans
 }
 
 export const INITIAL_GAME_STATE: GameState = {
@@ -233,4 +244,9 @@ export const INITIAL_GAME_STATE: GameState = {
   arbitrumUnlocked: false,
   tradesThisMinute: 0,
   lastTradeTime: 0,
+  monsters: [
+    { type: 'flash', level: 1, xp: 0, color: '#ff0066', unlocked: true },
+  ],
+  flashLoanUsed: 0,
+  flashLoanProfit: 0,
 };
