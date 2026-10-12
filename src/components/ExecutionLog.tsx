@@ -20,9 +20,9 @@ export default function ExecutionLog({ history }: ExecutionLogProps) {
             <tr className="shock-pink border-b border-yellow-500 font-bold">
               <th className="text-left py-1 px-1">Status</th>
               <th className="text-left py-1 px-1">Pair</th>
-              <th className="text-left py-1 px-1">Strategy</th>
               <th className="text-left py-1 px-1">Route</th>
-              <th className="text-right py-1 px-1">Flash $</th>
+              <th className="text-left py-1 px-1">Flash</th>
+              <th className="text-right py-1 px-1">Amount</th>
               <th className="text-right py-1 px-1">Net P&L</th>
             </tr>
           </thead>
@@ -51,13 +51,11 @@ export default function ExecutionLog({ history }: ExecutionLogProps) {
                   <td className="py-1 px-1 shock-cyan font-bold">
                     {entry.pair.join('/')}
                   </td>
-                  <td className="py-1 px-1">
-                    <span className="text-[8px] px-1 rounded shock-purple font-bold">
-                      {entry.strategy}
-                    </span>
-                  </td>
-                  <td className="py-1 px-1 shock-pink">
+                  <td className="py-1 px-1 shock-pink text-[9px]">
                     {entry.buyDex}→{entry.sellDex}
+                  </td>
+                  <td className="py-1 px-1 shock-green text-[9px]">
+                    {entry.flashLoanProvider}
                   </td>
                   <td className="py-1 px-1 text-right shock-cyan font-mono">
                     ${entry.flashLoanAmount.toFixed(2)}
