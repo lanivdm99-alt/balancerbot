@@ -130,40 +130,163 @@ function App() {
     setTimeout(() => setNotification(null), 3000);
   };
 
-  // Connect Bitget Wallet
+  // Detect available wallets
+  const getAvailableWallets = () => {
+    const wallets: { name: string; provider: any; icon: string }[] = [];
+    
+    if (typeof window !== 'undefined') {
+      // Bitget Wallet (primary)
+      if ((window as any).bitkeep?.ethereum) {
+        wallets.push({
+          name: 'Bitget Wallet',
+          provider: (window as any).bitkeep.ethereum,
+          icon: '🟡',
+        });
+      }
+      
+      // Bitget Wallet (alternate namespace)
+      if ((window as any).bitget?.ethereum) {
+        wallets.push({
+          name: 'Bitget Wallet',
+          provider: (window as any).bitget.ethereum,
+          icon: '🟡',
+        });
+      }
+      
+      // MetaMask / Injected
+      if ((window as any).ethereum?.isMetaMask) {
+        wallets.push({
+          name: 'MetaMask',
+          provider: (window as any).ethereum,
+          icon: '🦊',
+        });
+      }
+      
+      // Generic injected
+      if ((window as any).ethereum && !wallets.length) {
+        wallets.push({
+          name: 'Web3 Wallet',
+          provider: (window as any).ethereum,
+          icon: '🔗',
+        });
+      }
+    }
+    
+    return wallets;
+  };
+
+  // Switch to Polygon network
+  const switchToPolygon = async (provider: any) => {
+    const POLYGON_CHAIN_ID = '0x89'; // 137 in hex
+    const POLYGON_CHAIN_ID_DECIMAL = 137;
+    
+    try {
+      // Try to switch first
+      await provider.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: POLYGON_CHAIN_ID }],
+      });
+      return true;
+    } catch (switchError: any) {
+      // If chain not added, add it
+      if (switchError.code === 4902) {
+        try {
+          await provider.request({
+            method: 'wallet_addEthereumChain',
+            params: [{
+              chainId: POLYGON_CHAIN_ID,
+              chainName: 'Polygon Mainnet',
+              nativeCurrency: {
+                name: 'MATIC',
+                symbol: 'MATIC',
+                decimals: 18,
+              },
+              rpcUrls: ['https://polygon-rpc.com'],
+              blockExplorerUrls: ['https://polygonscan.com'],
+            }],
+          });
+          return true;
+        } catch (addError) {
+          console.error('Failed to add Polygon network:', addError);
+          return false;
+        }
+      }
+      console.error('Failed to switch network:', switchError);
+      return false;
+    }
+  };
+
+  // Connect to specific wallet
+  const connectToWallet = async (wallet: { name: string; provider: any; icon: string }) => {
+    try {
+      // Request accounts
+      const accounts = await wallet.provider.request({ 
+        method: 'eth_requestAccounts' 
+      });
+      
+      if (!accounts || accounts.length === 0) {
+        showNotification('No accounts found', 'error');
+        return;
+      }
+
+      // Switch to Polygon
+      const switched = await switchToPolygon(wallet.provider);
+      if (!switched) {
+        showNotification('Please switch to Polygon network manually', 'error');
+        return;
+      }
+
+      // Get balance
+      const balance = await blockchainService.getWalletBalance(accounts[0]);
+      
+      setWalletAddress(accounts[0]);
+      setWalletBalance(balance);
+      setWalletConnected(true);
+      setShowWalletModal(false);
+      showNotification(`${wallet.icon} ${wallet.name} Connected!`, 'success');
+
+      // Listen for account changes
+      wallet.provider.on('accountsChanged', (newAccounts: string[]) => {
+        if (newAccounts.length === 0) {
+          setWalletConnected(false);
+          setWalletAddress('');
+          setWalletBalance(0);
+        } else {
+          setWalletAddress(newAccounts[0]);
+          blockchainService.getWalletBalance(newAccounts[0]).then(setWalletBalance);
+        }
+      });
+
+      // Listen for chain changes
+      wallet.provider.on('chainChanged', () => {
+        window.location.reload();
+      });
+
+    } catch (err: any) {
+      console.error('Connection error:', err);
+      if (err.code === 4001) {
+        showNotification('Connection rejected by user', 'error');
+      } else {
+        showNotification(`Failed to connect: ${err.message}`, 'error');
+      }
+    }
+  };
+
+  // Connect Bitget Wallet (main entry)
   const connectWallet = async () => {
-    if (typeof window !== 'undefined' && (window as any).bitkeep?.ethereum) {
-      try {
-        const provider = (window as any).bitkeep.ethereum;
-        const accounts = await provider.request({ method: 'eth_requestAccounts' });
-        if (accounts.length > 0) {
-          setWalletAddress(accounts[0]);
-          const balance = await blockchainService.getWalletBalance(accounts[0]);
-          setWalletBalance(balance);
-          setWalletConnected(true);
-          setShowWalletModal(false);
-          showNotification('Bitget Wallet Connected!', 'success');
-        }
-      } catch (err) {
-        showNotification('Failed to connect wallet', 'error');
-      }
-    } else if (typeof window !== 'undefined' && (window as any).ethereum) {
-      try {
-        const provider = (window as any).ethereum;
-        const accounts = await provider.request({ method: 'eth_requestAccounts' });
-        if (accounts.length > 0) {
-          setWalletAddress(accounts[0]);
-          const balance = await blockchainService.getWalletBalance(accounts[0]);
-          setWalletBalance(balance);
-          setWalletConnected(true);
-          setShowWalletModal(false);
-          showNotification('Wallet Connected!', 'success');
-        }
-      } catch (err) {
-        showNotification('Failed to connect wallet', 'error');
-      }
+    const wallets = getAvailableWallets();
+    
+    if (wallets.length === 0) {
+      showNotification('No wallet detected! Install Bitget Wallet extension', 'error');
+      return;
+    }
+    
+    // Prefer Bitget Wallet
+    const bitgetWallet = wallets.find(w => w.name.includes('Bitget'));
+    if (bitgetWallet) {
+      await connectToWallet(bitgetWallet);
     } else {
-      showNotification('No wallet detected. Install Bitget Wallet!', 'error');
+      await connectToWallet(wallets[0]);
     }
   };
 
@@ -373,6 +496,14 @@ function App() {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Network Indicator */}
+            {walletConnected && (
+              <div className="px-2 py-1 border-2 border-purple-500 rounded flex items-center gap-1">
+                <div className="w-2 h-2 bg-purple-500 rounded-full animate-pulse"></div>
+                <span className="text-xs font-bold shock-purple">POLYGON</span>
+              </div>
+            )}
+
             {/* Level Badge */}
             <div className="px-3 py-1 border-2 rounded" style={{ borderColor: currentLevel.color }}>
               <span className="text-xs font-bold" style={{ color: currentLevel.color }}>
@@ -389,7 +520,8 @@ function App() {
 
             {/* Wallet */}
             {walletConnected ? (
-              <div className="px-3 py-1 border-2 border-cyan-500 rounded">
+              <div className="px-3 py-1 border-2 border-cyan-500 rounded flex items-center gap-2">
+                <span className="text-xs">🟡</span>
                 <span className="text-xs font-bold shock-cyan">
                   {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
                 </span>
@@ -399,7 +531,7 @@ function App() {
                 onClick={() => setShowWalletModal(true)}
                 className="px-3 py-1 btn-pink text-xs"
               >
-                Connect Wallet
+                🟡 Connect Bitget
               </button>
             )}
           </div>
@@ -412,23 +544,52 @@ function App() {
           <div className="box-cyan p-6 max-w-md w-full mx-4">
             <h2 className="text-xl shock-cyan font-bold mb-4">🔗 Connect Wallet</h2>
             <p className="shock-yellow text-sm mb-4">
-              Link your Bitget Wallet to start trading
+              Choose your wallet to start playing
             </p>
-            <button
-              onClick={connectWallet}
-              className="w-full btn-cyan py-3 text-sm font-bold mb-2"
-            >
-              🦊 Connect Bitget Wallet
-            </button>
+            
+            {/* Available Wallets */}
+            <div className="space-y-2 mb-4">
+              {getAvailableWallets().length > 0 ? (
+                getAvailableWallets().map((wallet, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => connectToWallet(wallet)}
+                    className="w-full btn-cyan py-3 text-sm font-bold flex items-center justify-center gap-2"
+                  >
+                    <span className="text-lg">{wallet.icon}</span>
+                    <span>Connect {wallet.name}</span>
+                  </button>
+                ))
+              ) : (
+                <div className="text-center py-4">
+                  <p className="shock-pink text-sm mb-3">No wallet detected!</p>
+                  <a
+                    href="https://web3.bitget.com/en/wallet-download"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block btn-cyan px-4 py-2 text-sm font-bold"
+                  >
+                    🟡 Install Bitget Wallet
+                  </a>
+                </div>
+              )}
+            </div>
+
             <button
               onClick={() => setShowWalletModal(false)}
               className="w-full py-2 text-xs shock-pink hover:underline"
             >
               Cancel
             </button>
-            <p className="text-[10px] shock-pink mt-4">
-              ⚠️ Make sure your wallet is on Polygon network
-            </p>
+            
+            <div className="mt-4 pt-4 border-t border-cyan-500/30">
+              <p className="text-[10px] shock-yellow">
+                ⚠️ Will auto-switch to Polygon network
+              </p>
+              <p className="text-[10px] shock-cyan mt-1">
+                💡 Starting capital: $4.00 MATIC
+              </p>
+            </div>
           </div>
         </div>
       )}
@@ -494,21 +655,81 @@ function App() {
       {/* Main Dashboard */}
       {!walletConnected ? (
         <div className="flex items-center justify-center h-[calc(100vh-80px)]">
-          <div className="text-center">
+          <div className="text-center max-w-2xl mx-auto px-4">
             <div className="text-6xl mb-4">🎮</div>
             <h2 className="text-3xl shock-cyan font-bold mb-4">Welcome to FLASH-X</h2>
-            <p className="shock-yellow mb-6">The Ultimate Flash Loan Arbitrage Game</p>
-            <button
-              onClick={() => setShowWalletModal(true)}
-              className="btn-pink px-8 py-3 text-lg font-bold"
-            >
-              🚀 START GAME - Connect Wallet
-            </button>
-            <div className="mt-8 text-sm shock-cyan">
-              <p>Starting Capital: <span className="shock-green font-bold">$4.00</span></p>
-              <p>Chain: <span className="shock-green font-bold">Polygon PoS</span></p>
-              <p>Flash Loans: <span className="shock-green font-bold">FREE</span></p>
-              <p className="mt-2 shock-yellow">🔒 Arbitrum unlocks at $100</p>
+            <p className="shock-yellow mb-6 text-lg">
+              The Ultimate Flash Loan Arbitrage Game
+            </p>
+            
+            {/* Bitget Wallet Section */}
+            <div className="box-purple p-6 mb-6">
+              <div className="flex items-center justify-center gap-3 mb-4">
+                <span className="text-4xl">🟡</span>
+                <h3 className="text-xl shock-purple font-bold">Bitget Wallet</h3>
+              </div>
+              
+              {getAvailableWallets().length > 0 ? (
+                <div>
+                  <p className="shock-green text-sm mb-4">
+                    ✅ Wallet detected! Ready to connect.
+                  </p>
+                  <button
+                    onClick={() => setShowWalletModal(true)}
+                    className="btn-cyan px-8 py-3 text-lg font-bold"
+                  >
+                    🚀 START GAME
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  <p className="shock-pink text-sm mb-4">
+                    ⚠️ Bitget Wallet extension not detected
+                  </p>
+                  <a
+                    href="https://web3.bitget.com/en/wallet-download"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block btn-pink px-6 py-3 text-base font-bold mb-3"
+                  >
+                    📥 Install Bitget Wallet
+                  </a>
+                  <p className="text-xs shock-cyan mt-3">
+                    After installation, refresh this page
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Game Info */}
+            <div className="grid grid-cols-2 gap-4 text-left">
+              <div className="box-cyan p-4">
+                <h4 className="shock-cyan font-bold mb-2">💰 Starting Capital</h4>
+                <p className="text-2xl shock-green font-bold">$4.00</p>
+                <p className="text-xs shock-yellow mt-1">MATIC on Polygon</p>
+              </div>
+              
+              <div className="box-green p-4">
+                <h4 className="shock-green font-bold mb-2">⚡ Flash Loans</h4>
+                <p className="text-2xl shock-green font-bold">FREE</p>
+                <p className="text-xs shock-yellow mt-1">0 bps from Uniswap V3</p>
+              </div>
+              
+              <div className="box-yellow p-4">
+                <h4 className="shock-yellow font-bold mb-2">🎯 Goal</h4>
+                <p className="text-2xl shock-green font-bold">$100</p>
+                <p className="text-xs shock-cyan mt-1">Unlock Arbitrum chain</p>
+              </div>
+              
+              <div className="box-purple p-4">
+                <h4 className="shock-purple font-bold mb-2">🤖 MEV-Share</h4>
+                <p className="text-2xl shock-green font-bold">90%</p>
+                <p className="text-xs shock-cyan mt-1">Tips to validators</p>
+              </div>
+            </div>
+
+            <div className="mt-6 text-xs shock-cyan">
+              <p>🔒 Secure • ⚡ Fast • 💎 Free Flash Loans</p>
             </div>
           </div>
         </div>
@@ -593,16 +814,39 @@ function App() {
               </div>
             </div>
 
-            {/* Network */}
+            {/* Network & Wallet */}
             <div className="box-cyan p-3">
+              <h3 className="text-xs uppercase tracking-wider shock-pink mb-2 font-bold">
+                🟡 Bitget Wallet
+              </h3>
+              <div className="space-y-1 text-[10px]">
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Address:</span>
+                  <span className="shock-green font-mono">
+                    {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Balance:</span>
+                  <span className="shock-green font-bold">{walletBalance.toFixed(4)} MATIC</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Network:</span>
+                  <span className="shock-purple font-bold">Polygon PoS</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Status:</span>
+                  <span className="shock-green font-bold">✓ Connected</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Network Stats */}
+            <div className="box-purple p-3">
               <h3 className="text-xs uppercase tracking-wider shock-pink mb-2 font-bold">
                 🌐 Network
               </h3>
               <div className="space-y-1 text-[10px]">
-                <div className="flex justify-between">
-                  <span className="shock-cyan">Polygon:</span>
-                  <span className="shock-green font-bold">✓ Active</span>
-                </div>
                 <div className="flex justify-between">
                   <span className="shock-cyan">Block:</span>
                   <span className="shock-green font-mono">#{blockNumber.toLocaleString()}</span>
@@ -611,17 +855,13 @@ function App() {
                   <span className="shock-cyan">Gas:</span>
                   <span className="shock-yellow font-mono">{gasPrice.toFixed(2)} Gwei</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="shock-cyan">Wallet:</span>
-                  <span className="shock-green font-mono">{walletBalance.toFixed(4)} MATIC</span>
-                </div>
-                <div className="mt-2 pt-2 border-t border-cyan-500/30">
+                <div className="mt-2 pt-2 border-t border-purple-500/30">
                   <div className="flex justify-between">
                     <span className="shock-pink">Arbitrum:</span>
                     {gameState.arbitrumUnlocked ? (
                       <span className="shock-green font-bold">✓ UNLOCKED</span>
                     ) : (
-                      <span className="shock-yellow font-bold">🔒 ${GAME_CONFIG.unlockArbitrumAt - gameState.capital > 0 ? (GAME_CONFIG.unlockArbitrumAt - gameState.capital).toFixed(2) : '0'} to unlock</span>
+                      <span className="shock-yellow font-bold">🔒 ${Math.max(0, GAME_CONFIG.unlockArbitrumAt - gameState.capital).toFixed(2)} to unlock</span>
                     )}
                   </div>
                   {!gameState.arbitrumUnlocked && (

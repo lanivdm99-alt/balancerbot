@@ -1,12 +1,19 @@
 # 🎮 FLASH-X - Flash Loan Arbitrage Game
 
-A gamified flash loan arbitrage bot for Polygon PoS with real-time price scanning, achievement system, and Flashbots MEV-Share integration.
+A gamified flash loan arbitrage bot for Polygon PoS with real-time price scanning, achievement system, Flashbots MEV-Share integration, and Bitget Wallet support.
 
 ## 🚀 Features
 
+### 🟡 Bitget Wallet Integration
+- **Auto-Detection**: Automatically detects Bitget Wallet extension
+- **Network Switching**: Auto-switches to Polygon Mainnet
+- **Real-Time Balance**: Live MATIC balance tracking
+- **Secure Connection**: All transactions signed in wallet
+- **Visual Indicators**: Purple POLYGON badge, green status
+
 ### Game Elements
 - **Level System**: 7 levels from Newbie to Flash God
-- **XP & Achievements**: Earn XP, unlock achievements
+- **XP & Achievements**: 12 achievements to unlock
 - **Streak Tracking**: Track win/loss streaks
 - **Capital Growth**: Start with $4, grow to $100+ to unlock Arbitrum
 - **Real-time Stats**: Live PnL, win rate, biggest wins
@@ -14,16 +21,42 @@ A gamified flash loan arbitrage bot for Polygon PoS with real-time price scannin
 ### Technical Features
 - **Multi-DEX Scanning**: Uniswap V3, QuickSwap V3, SushiSwap V3
 - **Free Flash Loans**: Uniswap V3 Flash (0 bps), Morpho Blue, Aave V3
-- **Flashbots Integration**: MEV-Share for private transactions
-- **Bitget Wallet**: Connect your wallet directly
+- **Flashbots Integration**: MEV-Share for private transactions (90% tip)
+- **Smart Contract**: Production-ready FlashArbX.sol
 - **Real-time Prices**: Live pool scanning every 5 seconds
+
+## 🟡 Bitget Wallet Setup
+
+### Installation
+1. Visit [Bitget Wallet Download](https://web3.bitget.com/en/wallet-download)
+2. Install for your browser (Chrome, Firefox, Edge, Brave)
+3. Create or import your wallet
+4. Add MATIC tokens for gas fees
+
+### Connection
+1. Click **"🟡 Connect Bitget"** button
+2. Approve connection in Bitget Wallet popup
+3. Wallet auto-switches to Polygon network
+4. You're connected! 🎉
+
+### Features
+- ✅ Auto-detection of Bitget Wallet extension
+- ✅ Automatic Polygon network switching
+- ✅ Real-time balance tracking
+- ✅ Account change detection
+- ✅ Visual indicators (purple POLYGON badge)
+
+📖 **Full Guide**: See [BITGET_WALLET_GUIDE.md](./BITGET_WALLET_GUIDE.md)
+
+---
 
 ## 🎯 How to Play
 
 ### 1. Connect Wallet
-- Click "Connect Wallet" button
-- Select Bitget Wallet (or any Web3 wallet)
-- Ensure you're on Polygon network
+- Click "🟡 Connect Bitget" button
+- Approve connection in Bitget Wallet
+- Wallet auto-switches to Polygon network
+- You're ready to play!
 
 ### 2. Start Scanner
 - Click "▶ Start Scanner" to begin scanning pools
