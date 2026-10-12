@@ -12,8 +12,14 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 
 /**
  * @title FlashArbX
- * @notice Multi-hop atomic arbitrage executor via Balancer V3 flash loans
- * @dev Interfaces with Balancer V3 Vault singleton for zero-fee flash loans
+ * @notice Multi-hop atomic arbitrage executor with multi-provider flash loans
+ * @dev Supports multiple FREE flash loan providers:
+ *      - Balancer V3 (0 bps) - Primary provider
+ *      - Uniswap V3 Flash (0 bps) - Alternative
+ *      - Morpho Blue (0 bps) - Alternative
+ *      - Aave V3 (5 bps) - Fallback
+ *      ⚠ Balancer V2 is DEPRECATED (exploited Nov 2025) - DO NOT USE
+ *      
  *      Executes multi-DEX swaps atomically with strict profit guardrails
  *      Integrates Flashbots MEV-Share for private transaction submission
  */
@@ -158,15 +164,17 @@ contract FlashArbX is IFlashLoanReceiver, ReentrancyGuard, Ownable {
 }`;
 
 const SCANNER_CODE = `/**
- * FLASH-X Off-Chain Scanner & Execution Engine
- * TypeScript / Node.js - High-Performance MEV Bot
+ * FLASH-X Off-Chain Scanner & Execution Engine v4.0
+ * TypeScript / Node.js - Ultra-High-Performance MEV Bot
  * 
  * Architecture:
- * - WebSocket RPC connections for real-time mempool monitoring
- * - Multi-chain price aggregation across all integrated DEXs
+ * - Multicall3 batched queries (100+ pools per RPC call)
+ * - WebSocket + HTTP hybrid for fastest updates
+ * - Pool address caching (discovered once, reused forever)
+ * - Multi-provider flash loans (Uniswap V3 Flash, Morpho, Balancer V3)
  * - Flashbots MEV-Share integration for private transactions
  * - Optimal trade sizing using AMM mathematical formulas
- * - Local state simulation via Anvil/Hardhat for dry-run mode
+ * - ⚠ Balancer V2 REMOVED (deprecated after Nov 2025 exploit)
  */
 
 import { WebSocket } from 'ws';

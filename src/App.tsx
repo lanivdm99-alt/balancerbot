@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { blockchainService } from './services/scanner';
 import { ArbOpportunity, PriceQuote, FLASH_LOAN_PROVIDERS, DEXS, TOKENS, PRIORITY_PAIRS } from './services/blockchain';
+import SpeedIndicator from './components/SpeedIndicator';
 import Header from './components/Header';
 import GasTracker from './components/GasTracker';
 import PriceMatrix from './components/PriceMatrix';
@@ -27,6 +28,7 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [scanProgress, setScanProgress] = useState({ current: 0, total: 0 });
   const [pnl, setPnl] = useState(0);
+  const [scanDuration, setScanDuration] = useState(0);
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -48,10 +50,12 @@ function App() {
       setGasPrice(gas);
 
       // Fetch all pool prices with progress
+      const startTime = Date.now();
       const prices = await blockchainService.fetchAllPrices((current, total) => {
         setScanProgress({ current, total });
       });
       setPriceCache(prices);
+      setScanDuration(Date.now() - startTime);
 
       // Detect arbitrage opportunities
       const opps = blockchainService.detectArbitrage();
@@ -81,7 +85,7 @@ function App() {
   useEffect(() => {
     if (isRunning) {
       fetchBlockchainData();
-      intervalRef.current = setInterval(fetchBlockchainData, 8000); // Poll every 8 seconds
+      intervalRef.current = setInterval(fetchBlockchainData, 5000); // Poll every 5 seconds (faster!)
     } else {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
@@ -151,6 +155,7 @@ function App() {
               isLoading={isLoading}
             />
             <GasTracker gasPrice={gasPrice} />
+            <SpeedIndicator scanDuration={scanDuration} poolCount={priceCache.size} />
             <FlashLoanPanel providers={FLASH_LOAN_PROVIDERS} />
             <DexPanel dexs={DEXS} tokenCount={Object.keys(TOKENS).length} pairCount={PRIORITY_PAIRS.length} />
           </div>
@@ -233,14 +238,22 @@ function SetupGuide() {
         </section>
 
         <section className="box-cyan p-4">
-          <h3 className="text-lg shock-yellow font-bold mb-3">💰 Free Flash Loans</h3>
+          <h3 className="text-lg shock-yellow font-bold mb-3">💰 Free Flash Loans (2026)</h3>
           <div className="space-y-2 shock-cyan text-xs">
-            {Object.entries(FLASH_LOAN_PROVIDERS).map(([key, provider]) => (
+            {Object.entries(FLASH_LOAN_PROVIDERS).filter(([_, p]) => p.status === 'active').map(([key, provider]) => (
               <div key={key} className="flex justify-between border-b border-cyan-500/30 pb-1">
                 <span className="font-bold">{provider.name}</span>
                 <span className={provider.fee === 0 ? 'shock-green font-bold' : 'shock-yellow'}>
                   {provider.fee === 0 ? 'FREE (0 bps)' : `${provider.fee} bps`}
                 </span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 pt-2 border-t border-pink-500/30">
+            <p className="text-[10px] shock-pink font-bold">⚠ Deprecated (Do NOT use):</p>
+            {Object.entries(FLASH_LOAN_PROVIDERS).filter(([_, p]) => p.status === 'deprecated').map(([key, provider]) => (
+              <div key={key} className="text-[10px] text-gray-500 line-through mt-1">
+                {provider.name} - Exploited in Nov 2025
               </div>
             ))}
           </div>

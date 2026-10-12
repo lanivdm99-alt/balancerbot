@@ -38,7 +38,7 @@ export const TOKENS: Record<string, { address: string; decimals: number; symbol:
   GHST:    { address: '0x385Eeac5cB85A38A9a07A70c73e0a3271CfB54A7', decimals: 18, symbol: 'GHST' },
   
   // Layer 2 / Infrastructure
-  GHO:     { address: '0x52Cd613f1A12085E45B95d1A4E924545d723C74b', decimals: 18, symbol: 'GHO' },
+  GHO:     { address: '0x52Cd613f1A12085E45B95d1A4fC4dBAE93B3bCCD', decimals: 18, symbol: 'GHO' },
   LDO:     { address: '0x03b54A6e9a984069379fae1a4fC4dBAE93B3bCCD', decimals: 18, symbol: 'LDO' },
   
   // Wrapped / Bridged
@@ -51,21 +51,21 @@ export const TOKENS: Record<string, { address: string; decimals: number; symbol:
 };
 
 // ═══════════════════════════════════════════════════════════
-// ALL DEX EXCHANGES ON POLYGON
+// ALL DEX EXCHANGES ON POLYGON (Updated 2026)
 // ═══════════════════════════════════════════════════════════
 
 export const DEXS: Record<string, {
   name: string;
   factory: string;
-  type: 'uniswapV3' | 'algebra' | 'balancerV2' | 'curve' | 'dodo';
+  type: 'uniswapV3' | 'algebra' | 'balancerV3' | 'curve' | 'dodo';
   fees: number[];
-  flashLoanFee: number; // in basis points (0 = free!)
+  flashLoanFee: number;
 }> = {
   UniswapV3: {
     name: 'Uniswap V3',
     factory: '0x1F98431c8aD98523631AE4a59f267346ea31F984',
     type: 'uniswapV3',
-    fees: [100, 500, 3000, 10000], // 0.01%, 0.05%, 0.3%, 1%
+    fees: [100, 500, 3000, 10000],
     flashLoanFee: 0,
   },
   QuickSwapV3: {
@@ -89,6 +89,13 @@ export const DEXS: Record<string, {
     fees: [100, 500, 3000, 10000],
     flashLoanFee: 0,
   },
+  BalancerV3: {
+    name: 'Balancer V3',
+    factory: '0x94eA795B2Cd476C86fD8D7e56c664aE2d76B8a2d',
+    type: 'balancerV3',
+    fees: [100, 500, 3000],
+    flashLoanFee: 0,
+  },
   DODO: {
     name: 'DODO',
     factory: '0x72d2252a86E869fC7e2C4C3d8d8B6E1C7d8d4e3f',
@@ -99,122 +106,86 @@ export const DEXS: Record<string, {
 };
 
 // ═══════════════════════════════════════════════════════════
-// FREE FLASH LOAN PROVIDERS
+// FREE FLASH LOAN PROVIDERS (Updated 2026 - No Balancer V2!)
 // ═══════════════════════════════════════════════════════════
 
 export const FLASH_LOAN_PROVIDERS: Record<string, {
   name: string;
   address: string;
-  fee: number; // in basis points (0 = free!)
+  fee: number;
   maxAmount: string;
+  status: 'active' | 'deprecated';
 }> = {
-  BalancerV2: {
-    name: 'Balancer V2',
-    address: '0xBA12222222228d8Ba445958a75a0704d566BF2C8',
-    fee: 0, // 0 bps = FREE!
-    maxAmount: 'Unlimited',
+  UniswapV3Flash: {
+    name: 'Uniswap V3 Flash',
+    address: '0xE592427A0AEce92De3Edee1F18E0157C05861564',
+    fee: 0,
+    maxAmount: 'Pool Liquidity',
+    status: 'active',
   },
   AaveV3: {
     name: 'Aave V3',
     address: '0x794a61358D6845594F94dc1DB02A252b5b4814aD',
-    fee: 5, // 0.05% (basically free)
+    fee: 5,
     maxAmount: 'Pool TVL',
+    status: 'active',
   },
-  UniswapV3Flash: {
-    name: 'Uniswap V3 Flash',
-    address: '0xE592427A0AEce92De3Edee1F18E0157C05861564',
-    fee: 0, // Free flash swaps (must return same block)
-    maxAmount: 'Pool Liquidity',
-  },
-  dYdX: {
-    name: 'dYdX Solo Margin',
-    address: '0x92D6C1e31e14520e676a687F0a93788B716BEff5',
-    fee: 0, // Free flash loans
+  Morpho: {
+    name: 'Morpho Blue',
+    address: '0xBBBBBbbBBB9cC5e90e3b3Af64bdAF62C37EEFFCb',
+    fee: 0,
     maxAmount: 'Vault Balance',
+    status: 'active',
+  },
+  BalancerV3: {
+    name: 'Balancer V3',
+    address: '0x94eA795B2Cd476C86fD8D7e56c664aE2d76B8a2d',
+    fee: 0,
+    maxAmount: 'Unlimited',
+    status: 'active',
+  },
+  BalancerV2: {
+    name: 'Balancer V2',
+    address: '0xBA12222222228d8Ba445958a75a0704d566BF2C8',
+    fee: 0,
+    maxAmount: 'Unlimited',
+    status: 'deprecated',
   },
 };
 
 // ═══════════════════════════════════════════════════════════
-// ALL TRADING PAIRS (Generated from tokens)
+// ALL TRADING PAIRS
 // ═══════════════════════════════════════════════════════════
 
-export function generateAllPairs(): [string, string][] {
-  const tokenSymbols = Object.keys(TOKENS);
-  const pairs: [string, string][] = [];
-  
-  // Generate all possible pairs
-  for (let i = 0; i < tokenSymbols.length; i++) {
-    for (let j = i + 1; j < tokenSymbols.length; j++) {
-      pairs.push([tokenSymbols[i], tokenSymbols[j]]);
-    }
-  }
-  
-  return pairs;
-}
-
-// Priority pairs (highest liquidity, most likely to have arb)
 export const PRIORITY_PAIRS: [string, string][] = [
-  // Stablecoin pairs (highest volume)
-  ['USDC', 'USDT'],
-  ['USDC', 'DAI'],
-  ['USDT', 'DAI'],
-  ['USDC', 'miMATIC'],
-  ['USDT', 'miMATIC'],
+  // Stablecoin pairs
+  ['USDC', 'USDT'], ['USDC', 'DAI'], ['USDT', 'DAI'],
+  ['USDC', 'miMATIC'], ['USDT', 'miMATIC'],
   
   // Major asset pairs
-  ['WETH', 'USDC'],
-  ['WETH', 'USDT'],
-  ['WETH', 'DAI'],
-  ['WETH', 'WBTC'],
-  ['WETH', 'WMATIC'],
-  ['WETH', 'AAVE'],
-  ['WETH', 'LINK'],
-  ['WETH', 'UNI'],
-  ['WETH', 'SUSHI'],
+  ['WETH', 'USDC'], ['WETH', 'USDT'], ['WETH', 'DAI'],
+  ['WETH', 'WBTC'], ['WETH', 'WMATIC'], ['WETH', 'AAVE'],
+  ['WETH', 'LINK'], ['WETH', 'UNI'], ['WETH', 'SUSHI'],
   
   // BTC pairs
-  ['WBTC', 'USDC'],
-  ['WBTC', 'USDT'],
-  ['WBTC', 'DAI'],
-  ['WBTC', 'WETH'],
+  ['WBTC', 'USDC'], ['WBTC', 'USDT'], ['WBTC', 'DAI'],
   
   // MATIC pairs
-  ['WMATIC', 'USDC'],
-  ['WMATIC', 'USDT'],
-  ['WMATIC', 'DAI'],
-  ['WMATIC', 'WETH'],
+  ['WMATIC', 'USDC'], ['WMATIC', 'USDT'], ['WMATIC', 'DAI'],
   
   // DeFi token pairs
-  ['AAVE', 'USDC'],
-  ['AAVE', 'WETH'],
-  ['LINK', 'USDC'],
-  ['LINK', 'WETH'],
-  ['UNI', 'USDC'],
-  ['UNI', 'WETH'],
-  ['SUSHI', 'USDC'],
-  ['SUSHI', 'WETH'],
-  ['CRV', 'USDC'],
-  ['CRV', 'WETH'],
-  ['BAL', 'USDC'],
-  ['BAL', 'WETH'],
-  ['COMP', 'USDC'],
-  ['COMP', 'WETH'],
+  ['AAVE', 'USDC'], ['AAVE', 'WETH'], ['LINK', 'USDC'],
+  ['LINK', 'WETH'], ['UNI', 'USDC'], ['UNI', 'WETH'],
+  ['SUSHI', 'USDC'], ['SUSHI', 'WETH'], ['CRV', 'USDC'],
+  ['BAL', 'USDC'], ['COMP', 'USDC'],
   
   // Gaming/Metaverse
-  ['SAND', 'USDC'],
-  ['SAND', 'WETH'],
-  ['MANA', 'USDC'],
-  ['MANA', 'WETH'],
-  ['GHST', 'USDC'],
-  ['GHST', 'WETH'],
+  ['SAND', 'USDC'], ['SAND', 'WETH'], ['MANA', 'USDC'],
+  ['MANA', 'WETH'], ['GHST', 'USDC'],
   
   // Cross pairs
-  ['AAVE', 'LINK'],
-  ['UNI', 'SUSHI'],
-  ['CRV', 'BAL'],
-  ['SAND', 'MANA'],
-  ['LDO', 'WETH'],
-  ['LDO', 'USDC'],
+  ['AAVE', 'LINK'], ['UNI', 'SUSHI'], ['SAND', 'MANA'],
+  ['LDO', 'WETH'], ['LDO', 'USDC'],
 ];
 
 // ═══════════════════════════════════════════════════════════
@@ -240,16 +211,11 @@ export const ALGEBRA_POOL_ABI = [
   'function liquidity() external view returns (uint128)',
 ];
 
-export const BALANCER_V2_VAULT_ABI = [
-  'function flashLoan(address recipient, address[] tokens, uint256[] amounts, bytes userData) external',
-  'function getPool(bytes32 poolId) external view returns (address, uint8)',
-  'function getPoolTokens(bytes32 poolId) external view returns (address[] tokens, uint256[] balances, uint256 lastChangeBlock)',
+export const MULTICALL3_ABI = [
+  'function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) public payable returns (tuple(bool success, bytes returnData)[] returnData)',
 ];
 
-export const AAVE_V3_POOL_ABI = [
-  'function flashLoanSimple(address receiverAddress, address asset, uint256 amount, bytes params, uint16 referralCode) external',
-  'function flashLoan(address receiverAddress, address[] assets, uint256[] amounts, uint256[] modes, address onBehalfOf, bytes params, uint16 referralCode) external',
-];
+export const MULTICALL3_ADDRESS = '0xcA11bde05977b3631167028862bE2a173976CA11';
 
 // ═══════════════════════════════════════════════════════════
 // TYPES
