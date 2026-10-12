@@ -12,6 +12,101 @@ import {
   INITIAL_GAME_STATE,
 } from './services/blockchain';
 
+const CONTRACT_CODE = `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+
+contract FlashArbX is Ownable, ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
+    struct ArbParams {
+        address tokenA;
+        address tokenB;
+        address buyRouter;
+        address sellRouter;
+        uint256 amountIn;
+        uint256 minProfit;
+        bytes buyCalldata;
+        bytes sellCalldata;
+    }
+
+    address public constant UNISWAP_V3_FLASH = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
+    address public mevShareRecipient;
+    uint256 public minProfitThreshold;
+    uint256 public maxGasPrice;
+    uint256 public totalTrades;
+    uint256 public totalProfit;
+    mapping(address => bool) public authorizedBots;
+
+    event ArbitrageExecuted(address indexed tokenA, address indexed tokenB, uint256 amountIn, uint256 profit);
+    event BotAuthorized(address indexed bot, bool authorized);
+
+    modifier onlyAuthorized() {
+        require(authorizedBots[msg.sender] || msg.sender == owner(), "Not authorized");
+        _;
+    }
+
+    constructor(address _mevShareRecipient, uint256 _minProfit, uint256 _maxGas) Ownable(msg.sender) {
+        mevShareRecipient = _mevShareRecipient;
+        minProfitThreshold = _minProfit;
+        maxGasPrice = _maxGas;
+        authorizedBots[msg.sender] = true;
+    }
+
+    function executeArbitrage(ArbParams calldata params) external onlyAuthorized nonReentrant {
+        require(params.amountIn > 0, "Amount must be > 0");
+        require(params.minProfit >= minProfitThreshold, "Below min profit");
+        require(tx.gasprice <= maxGasPrice, "Gas too high");
+
+        uint256 balanceBefore = IERC20(params.tokenA).balanceOf(address(this));
+
+        IUniswapV3Flash(UNISWAP_V3_FLASH).flash(
+            address(this), params.tokenA, params.tokenB, params.amountIn, abi.encode(params)
+        );
+
+        uint256 balanceAfter = IERC20(params.tokenA).balanceOf(address(this));
+        uint256 profit = balanceAfter - balanceBefore;
+        require(profit >= params.minProfit, "Insufficient profit");
+
+        if (mevShareRecipient != address(0) && profit > 0) {
+            IERC20(params.tokenA).safeTransfer(mevShareRecipient, profit * 90 / 100);
+        }
+
+        totalTrades++;
+        totalProfit += profit;
+        emit ArbitrageExecuted(params.tokenA, params.tokenB, params.amountIn, profit);
+    }
+
+    function uniswapV3FlashCallback(uint256 fee0, uint256, bytes calldata data) external {
+        require(msg.sender == UNISWAP_V3_FLASH, "Unauthorized");
+        ArbParams memory params = abi.decode(data, (ArbParams));
+        
+        (bool s1, ) = params.buyRouter.call(params.buyCalldata);
+        require(s1, "Buy failed");
+        (bool s2, ) = params.sellRouter.call(params.sellCalldata);
+        require(s2, "Sell failed");
+        
+        IERC20(params.tokenA).safeTransfer(UNISWAP_V3_FLASH, params.amountIn + fee0);
+    }
+
+    function setBotAuthorization(address bot, bool auth) external onlyOwner {
+        authorizedBots[bot] = auth;
+        emit BotAuthorized(bot, auth);
+    }
+
+    function emergencyWithdraw(address token) external onlyOwner {
+        IERC20(token).safeTransfer(owner(), IERC20(token).balanceOf(address(this)));
+    }
+}
+
+interface IUniswapV3Flash {
+    function flash(address recipient, address token0, address token1, uint256 amount0, bytes calldata data) external;
+}`;
+
 function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [walletConnected, setWalletConnected] = useState(false);
@@ -25,6 +120,7 @@ function App() {
   const [tradeLog, setTradeLog] = useState<ArbOpportunity[]>([]);
   const [scanProgress, setScanProgress] = useState({ current: 0, total: 0 });
   const [showWalletModal, setShowWalletModal] = useState(false);
+  const [showContractModal, setShowContractModal] = useState(false);
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' | 'achievement' } | null>(null);
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -337,6 +433,64 @@ function App() {
         </div>
       )}
 
+      {/* Contract Modal */}
+      {showContractModal && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center">
+          <div className="box-purple p-6 max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl shock-purple font-bold">📜 FlashArbX Contract</h2>
+              <button
+                onClick={() => setShowContractModal(false)}
+                className="shock-pink text-xl hover:scale-110 transition-transform"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div className="box-cyan p-3">
+                <h3 className="shock-cyan font-bold mb-2">🚀 Deploy to Polygon</h3>
+                <p className="text-xs shock-yellow mb-2">
+                  Copy this Solidity code and deploy using Foundry or Remix
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(CONTRACT_CODE);
+                      showNotification('Contract code copied!', 'success');
+                    }}
+                    className="btn-cyan px-4 py-2 text-xs"
+                  >
+                    📋 Copy Code
+                  </button>
+                  <a
+                    href="https://remix.ethereum.org/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn-green px-4 py-2 text-xs"
+                  >
+                    🔗 Open Remix
+                  </a>
+                </div>
+              </div>
+
+              <div className="bg-black border-2 border-purple-500 rounded p-4 overflow-x-auto">
+                <pre className="text-[10px] shock-green whitespace-pre-wrap font-mono">
+                  {CONTRACT_CODE}
+                </pre>
+              </div>
+
+              <div className="box-yellow p-3">
+                <h3 className="shock-yellow font-bold mb-2">⚙️ Deployment Command</h3>
+                <code className="text-[10px] shock-cyan block bg-black p-2 rounded">
+                  forge create --rpc-url $POLYGON_RPC --private-key $PRIVATE_KEY --constructor-args 0xYOUR_ADDRESS 10000000000000000 50000000000 contracts/FlashArbX.sol:FlashArbX
+                </code>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Main Dashboard */}
       {!walletConnected ? (
         <div className="flex items-center justify-center h-[calc(100vh-80px)]">
@@ -423,6 +577,12 @@ function App() {
                   }`}
                 >
                   {isRunning ? '⏸ Pause' : '▶ Start Scanner'}
+                </button>
+                <button
+                  onClick={() => setShowContractModal(true)}
+                  className="w-full px-3 py-2 rounded btn-green text-xs font-bold"
+                >
+                  📜 View Contract
                 </button>
                 <button
                   onClick={() => setWalletConnected(false)}

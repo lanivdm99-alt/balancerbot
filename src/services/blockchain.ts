@@ -129,6 +129,8 @@ export const GAME_CONFIG = {
     { id: 'perfect_10', name: 'Perfect 10', desc: '100% win rate over 10 trades', icon: '✨' },
     { id: 'scanner', name: 'Pool Scanner', desc: 'Scan 1000 pools', icon: '🔍' },
     { id: 'arbitrum_unlock', name: 'Multi-Chain', desc: 'Unlock Arbitrum', icon: '🌐' },
+    { id: 'contract_deployer', name: 'Contract Deployer', desc: 'Deploy FlashArbX contract', icon: '📜' },
+    { id: 'flashbots_pro', name: 'Flashbots Pro', desc: 'Use MEV-Share integration', icon: '🤖' },
   ],
 };
 
