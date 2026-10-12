@@ -1,19 +1,16 @@
-import { TOKENS, CHAINS } from '../utils/constants';
-
 interface PriceMatrixProps {
   prices: Record<string, Record<string, number>>;
 }
 
 export default function PriceMatrix({ prices }: PriceMatrixProps) {
-  const allDexs = new Set<string>();
-  Object.values(CHAINS).forEach(chain => chain.dexs.forEach(d => allDexs.add(d)));
-  const dexList = Array.from(allDexs);
+  const tokens = Object.keys(prices);
+  const dexes = Array.from(new Set(Object.values(prices).flatMap(p => Object.keys(p))));
 
   return (
     <div className="box-cyan p-3">
       <h3 className="text-xs uppercase tracking-wider shock-pink mb-3 flex items-center gap-2 font-bold">
-        <span>◎</span> Price Matrix
-        <span className="text-[10px] shock-pink ml-auto">Live Aggregation</span>
+        <span>◎</span> Live Pool Prices
+        <span className="text-[10px] shock-pink ml-auto">Uniswap V3</span>
       </h3>
 
       <div className="overflow-x-auto">
@@ -21,28 +18,28 @@ export default function PriceMatrix({ prices }: PriceMatrixProps) {
           <thead>
             <tr className="shock-pink border-b border-cyan-500 font-bold">
               <th className="text-left py-1 px-1">Token</th>
-              {dexList.map(dex => (
-                <th key={dex} className="text-right py-1 px-1">{dex.split(' ')[0]}</th>
+              {dexes.map(dex => (
+                <th key={dex} className="text-right py-1 px-1">{dex}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {TOKENS.map(token => {
-              const tokenPrices = prices[token.symbol] || {};
+            {tokens.map(token => {
+              const tokenPrices = prices[token] || {};
               const priceValues = Object.values(tokenPrices);
               const minPrice = Math.min(...priceValues);
               const maxPrice = Math.max(...priceValues);
               const spread = maxPrice > 0 ? ((maxPrice - minPrice) / minPrice) * 10000 : 0;
 
               return (
-                <tr key={token.symbol} className="border-b border-cyan-500/30 hover:bg-cyan-500/10">
+                <tr key={token} className="border-b border-cyan-500/30 hover:bg-cyan-500/10">
                   <td className="py-1 px-1">
-                    <span className="shock-cyan font-bold">{token.symbol}</span>
+                    <span className="shock-cyan font-bold">{token}</span>
                     {spread > 5 && (
                       <span className="ml-1 shock-yellow text-[8px] font-bold">▲{spread.toFixed(1)}bps</span>
                     )}
                   </td>
-                  {dexList.map(dex => {
+                  {dexes.map(dex => {
                     const price = tokenPrices[dex];
                     if (!price) return <td key={dex} className="text-right py-1 px-1 text-white/30">—</td>;
 

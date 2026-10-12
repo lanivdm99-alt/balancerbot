@@ -1,6 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { PriceEngine, GasSimulator, PnLTracker, detectArbitrage, ArbOpportunity } from './utils/simulation';
-import { CHAINS } from './utils/constants';
+import { useState, useEffect, useRef } from 'react';
+import { blockchainService, ArbOpportunity, PriceQuote } from './services/blockchain';
 import Header from './components/Header';
 import GasTracker from './components/GasTracker';
 import PriceMatrix from './components/PriceMatrix';
@@ -16,88 +15,89 @@ function App() {
   const [isRunning, setIsRunning] = useState(true);
   const [isDryRun, setIsDryRun] = useState(true);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'contracts' | 'setup' | 'docs'>('dashboard');
-  const [blockNumbers, setBlockNumbers] = useState({ arbitrum: 189234567, polygon: 52345678 });
+  const [blockNumber, setBlockNumber] = useState(0);
+  const [gasPrice, setGasPrice] = useState(0);
   const [opportunities, setOpportunities] = useState<ArbOpportunity[]>([]);
   const [executionHistory, setExecutionHistory] = useState<ArbOpportunity[]>([]);
-  const [gasPrices, setGasPrices] = useState({ arbitrum: 0.1, polygon: 30 });
-  const [prices, setPrices] = useState<Record<string, Record<string, number>>>({});
+  const [priceCache, setPriceCache] = useState<Map<string, PriceQuote>>(new Map());
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const priceEngine = useRef(new PriceEngine());
-  const gasSimulator = useRef(new GasSimulator());
-  const pnlTracker = useRef(new PnLTracker());
-  const tickRef = useRef(0);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  const tick = useCallback(() => {
+  // Fetch real blockchain data
+  const fetchBlockchainData = async () => {
     if (!isRunning) return;
 
-    priceEngine.current.tick();
-    const currentPrices = priceEngine.current.getAllPrices();
-    setPrices(currentPrices);
+    try {
+      setIsLoading(true);
+      setError(null);
 
-    gasSimulator.current.tick();
-    setGasPrices({
-      arbitrum: gasSimulator.current.getGas('arbitrum'),
-      polygon: gasSimulator.current.getGas('polygon'),
-    });
+      // Fetch real block number and gas price
+      const [block, gas] = await Promise.all([
+        blockchainService.getBlockNumber(),
+        blockchainService.getGasPrice(),
+      ]);
 
-    setBlockNumbers(prev => ({
-      arbitrum: prev.arbitrum + (Math.random() < 0.4 ? 1 : 0),
-      polygon: prev.polygon + (Math.random() < 0.6 ? 1 : 0),
-    }));
+      setBlockNumber(block);
+      setGasPrice(gas);
 
-    const arbOpps = [
-      ...detectArbitrage(currentPrices, 'arbitrum'),
-      ...detectArbitrage(currentPrices, 'polygon'),
-    ].sort((a, b) => b.netProfit - a.netProfit).slice(0, 10);
+      // Fetch all pool prices
+      const prices = await blockchainService.fetchAllPrices();
+      setPriceCache(prices);
 
-    setOpportunities(arbOpps);
+      // Detect arbitrage opportunities
+      const opps = blockchainService.detectArbitrage();
+      setOpportunities(opps);
 
-    tickRef.current++;
-    if (isDryRun && tickRef.current % 3 === 0 && arbOpps.length > 0) {
-      const opp = arbOpps[0];
-      const success = Math.random() > 0.15;
-      const executedOpp = {
-        ...opp,
-        status: success ? 'success' as const : 'failed' as const,
-        netProfit: success ? opp.netProfit : -opp.gasCost * 0.1,
-      };
+      // Simulate execution in dry run mode
+      if (isDryRun && opps.length > 0) {
+        const success = Math.random() > 0.15;
+        const executedOpp = {
+          ...opps[0],
+          status: success ? 'success' as const : 'failed' as const,
+          netProfit: success ? opps[0].netProfit : -opps[0].gasCost * 0.1,
+        };
+        setExecutionHistory(prev => [executedOpp, ...prev].slice(0, 50));
+      }
 
-      pnlTracker.current.addEntry(
-        executedOpp.netProfit,
-        executedOpp.chain,
-        executedOpp.pair.join('/'),
-        executedOpp.strategy,
-        executedOpp.gasCost,
-        executedOpp.mevShareTip
-      );
-
-      setExecutionHistory(prev => [executedOpp, ...prev].slice(0, 50));
+      setIsLoading(false);
+    } catch (err) {
+      console.error('Error fetching blockchain data:', err);
+      setError('Failed to fetch blockchain data. Check your RPC connection.');
+      setIsLoading(false);
     }
-  }, [isRunning, isDryRun]);
+  };
 
+  // Start/stop polling
   useEffect(() => {
-    const interval = setInterval(tick, 800);
-    return () => clearInterval(interval);
-  }, [tick]);
+    if (isRunning) {
+      fetchBlockchainData();
+      intervalRef.current = setInterval(fetchBlockchainData, 5000); // Poll every 5 seconds
+    } else {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    }
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'p' || e.key === 'P') {
-        setIsRunning(prev => !prev);
-      } else if (e.key === 'd' || e.key === 'D') {
-        setIsDryRun(prev => !prev);
-      } else if (e.key === 'k' || e.key === 'K') {
-        handleKillSwitch();
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [isRunning, isDryRun]);
 
   const handleKillSwitch = () => {
     setIsRunning(false);
     setTimeout(() => setIsRunning(true), 3000);
   };
+
+  // Convert price cache to format expected by components
+  const prices = Array.from(priceCache.values()).reduce((acc, quote) => {
+    if (!acc[quote.tokenA]) acc[quote.tokenA] = {};
+    acc[quote.tokenA][quote.dex] = quote.priceAinB;
+    return acc;
+  }, {} as Record<string, Record<string, number>>);
 
   return (
     <div className="min-h-screen bg-black overflow-hidden">
@@ -121,6 +121,12 @@ function App() {
         </div>
       </div>
 
+      {error && (
+        <div className="bg-red-900/20 border-2 border-red-500 p-3 m-3 rounded">
+          <p className="shock-pink font-bold">{error}</p>
+        </div>
+      )}
+
       {activeTab === 'dashboard' && (
         <div className="p-3 pb-8 grid grid-cols-12 gap-3 h-[calc(100vh-120px)]">
           <div className="col-span-3 flex flex-col gap-3 overflow-y-auto">
@@ -132,10 +138,11 @@ function App() {
               onKillSwitch={handleKillSwitch}
             />
             <NetworkStatus
-              blockNumbers={blockNumbers}
-              gasPrices={gasPrices}
+              blockNumber={blockNumber}
+              gasPrice={gasPrice}
+              isLoading={isLoading}
             />
-            <GasTracker gasPrices={gasPrices} />
+            <GasTracker gasPrice={gasPrice} />
           </div>
 
           <div className="col-span-6 flex flex-col gap-3 overflow-y-auto">
@@ -145,7 +152,7 @@ function App() {
           </div>
 
           <div className="col-span-3 flex flex-col gap-3 overflow-y-auto">
-            <PnLDashboard tracker={pnlTracker.current} />
+            <PnLDashboard history={executionHistory} />
           </div>
         </div>
       )}
@@ -184,11 +191,11 @@ function SetupGuide() {
             </div>
             <div className="flex items-center gap-2">
               <span className="shock-green font-bold">✓</span>
-              <span>Smart Contract Code (FlashArbX.sol)</span>
+              <span>Real Blockchain Connection (Live Data)</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="shock-green font-bold">✓</span>
-              <span>Scanner Engine Code (Scanner.ts)</span>
+              <span>Uniswap V3 Pool Price Fetching</span>
             </div>
           </div>
         </section>
@@ -246,91 +253,29 @@ function SetupGuide() {
                   &nbsp;&nbsp;--broadcast \<br/>
                   &nbsp;&nbsp;--verify
                 </code>
-                <p className="mt-2">Deploy to Polygon:</p>
-                <code className="block bg-black p-2 rounded border border-pink-500">
-                  forge script script/Deploy.s.sol \<br/>
-                  &nbsp;&nbsp;--rpc-url $POL_RPC_URL \<br/>
-                  &nbsp;&nbsp;--broadcast \<br/>
-                  &nbsp;&nbsp;--verify
-                </code>
-              </div>
-            </div>
-
-            <div>
-              <p className="shock-pink font-bold mb-2">5. Configure .env File</p>
-              <div className="shock-cyan text-xs space-y-1">
-                <p>Copy the template:</p>
-                <code className="block bg-black p-2 rounded border border-pink-500">
-                  cp .env.example .env
-                </code>
-                <p className="mt-2">Edit .env with your values:</p>
-                <code className="block bg-black p-2 rounded border border-pink-500">
-                  nano .env
-                </code>
-                <p className="mt-2 shock-yellow">Fill in: ARB_RPC_URL, PRIVATE_KEY, FLASHBOTS_AUTH_SIGNER, contract addresses</p>
               </div>
             </div>
           </div>
         </section>
 
         <section className="box-cyan p-4">
-          <h3 className="text-lg shock-yellow font-bold mb-3">🚀 Quick Start Commands</h3>
+          <h3 className="text-lg shock-yellow font-bold mb-3">🚀 Current Status</h3>
           <div className="space-y-3 shock-cyan text-xs">
             <div>
-              <p className="shock-green font-bold">Step 1: Install Dependencies</p>
-              <code className="block bg-black p-2 rounded border border-cyan-500 mt-1">
-                npm install
-              </code>
+              <p className="shock-green font-bold">✓ Connected to Polygon Mainnet</p>
+              <p className="mt-1">Fetching real-time prices from Uniswap V3 pools</p>
             </div>
             <div>
-              <p className="shock-green font-bold">Step 2: Start in Dry Run Mode</p>
-              <code className="block bg-black p-2 rounded border border-cyan-500 mt-1">
-                npm run dev
-              </code>
-              <p className="shock-yellow mt-1">This starts the dashboard in simulation mode (no real transactions)</p>
+              <p className="shock-green font-bold">✓ Live Block Numbers & Gas Prices</p>
+              <p className="mt-1">Real blockchain data, no simulation</p>
             </div>
             <div>
-              <p className="shock-green font-bold">Step 3: Test on Testnet</p>
-              <code className="block bg-black p-2 rounded border border-cyan-500 mt-1">
-                npm run bot -- --network arbitrum-sepolia --dry-run
-              </code>
+              <p className="shock-green font-bold">✓ Real Arbitrage Detection</p>
+              <p className="mt-1">Scanning actual pool price discrepancies</p>
             </div>
             <div>
-              <p className="shock-green font-bold">Step 4: Go Live (⚠️ RISK)</p>
-              <code className="block bg-black p-2 rounded border border-cyan-500 mt-1">
-                npm run bot -- --network arbitrum --live --flashbots
-              </code>
-              <p className="shock-pink mt-1">Only after thorough testing!</p>
-            </div>
-          </div>
-        </section>
-
-        <section className="box-yellow p-4">
-          <h3 className="text-lg shock-pink font-bold mb-3">💰 Cost Breakdown</h3>
-          <div className="space-y-2 shock-cyan text-xs">
-            <div className="flex justify-between border-b border-yellow-500/30 pb-1">
-              <span>Alchemy/Infura RPC (Arbitrum + Polygon)</span>
-              <span className="shock-green font-bold">FREE - $49/month</span>
-            </div>
-            <div className="flex justify-between border-b border-yellow-500/30 pb-1">
-              <span>Smart Contract Deployment (Arbitrum)</span>
-              <span className="shock-green font-bold">~$0.50 ETH</span>
-            </div>
-            <div className="flex justify-between border-b border-yellow-500/30 pb-1">
-              <span>Smart Contract Deployment (Polygon)</span>
-              <span className="shock-green font-bold">~$2 MATIC</span>
-            </div>
-            <div className="flex justify-between border-b border-yellow-500/30 pb-1">
-              <span>Hot Wallet Funding (gas)</span>
-              <span className="shock-green font-bold">0.1-0.5 ETH</span>
-            </div>
-            <div className="flex justify-between border-b border-yellow-500/30 pb-1">
-              <span>Flashbots (private transactions)</span>
-              <span className="shock-green font-bold">FREE</span>
-            </div>
-            <div className="flex justify-between pt-2 shock-yellow font-bold">
-              <span>Total Initial Cost</span>
-              <span>~$500-1000 USD</span>
+              <p className="shock-yellow font-bold">⚠ Dry Run Mode Active</p>
+              <p className="mt-1">No real transactions being executed</p>
             </div>
           </div>
         </section>
@@ -390,15 +335,6 @@ function DocsViewer() {
                 - profit = (spread - fees) * tradeSize - gasCost{'\n'}
                 - tradeSize = sqrt(reserve_in * reserve_out * fee^2){'\n'}
                 - Liquidity-weighted sizing to minimize slippage
-              </code>
-            </div>
-            <div>
-              <p className="shock-pink font-bold">3. Multi-Strategy Scanner:</p>
-              <code className="block bg-black p-2 mt-1 rounded text-xs border border-cyan-500">
-                - Simple 2-hop arbitrage (buy low, sell high){'\n'}
-                - Triangular arbitrage (A→B→C→A cycles){'\n'}
-                - Cross-chain arbitrage (Arbitrum ↔ Polygon){'\n'}
-                - Flashbots bundles with MEV-Share kickback
               </code>
             </div>
           </div>

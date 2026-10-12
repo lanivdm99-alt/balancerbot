@@ -1,4 +1,4 @@
-import { ArbOpportunity } from '../utils/simulation';
+import { ArbOpportunity } from '../services/blockchain';
 
 interface ExecutionLogProps {
   history: ArbOpportunity[];
@@ -19,7 +19,6 @@ export default function ExecutionLog({ history }: ExecutionLogProps) {
           <thead>
             <tr className="shock-pink border-b border-yellow-500 font-bold">
               <th className="text-left py-1 px-1">Status</th>
-              <th className="text-left py-1 px-1">Chain</th>
               <th className="text-left py-1 px-1">Pair</th>
               <th className="text-left py-1 px-1">Strategy</th>
               <th className="text-left py-1 px-1">Route</th>
@@ -30,7 +29,7 @@ export default function ExecutionLog({ history }: ExecutionLogProps) {
           <tbody>
             {history.length === 0 ? (
               <tr>
-                <td colSpan={7} className="text-center py-4 shock-cyan">
+                <td colSpan={6} className="text-center py-4 shock-cyan">
                   Awaiting execution signals...
                 </td>
               </tr>
@@ -49,27 +48,16 @@ export default function ExecutionLog({ history }: ExecutionLogProps) {
                       {entry.status.toUpperCase()}
                     </span>
                   </td>
-                  <td className="py-1 px-1">
-                    <span className={`px-1 rounded text-[8px] font-bold ${
-                      entry.chain === 'arbitrum' ? 'shock-cyan' : 'shock-pink'
-                    }`}>
-                      {entry.chain === 'arbitrum' ? 'ARB' : 'POL'}
-                    </span>
-                  </td>
                   <td className="py-1 px-1 shock-cyan font-bold">
                     {entry.pair.join('/')}
                   </td>
                   <td className="py-1 px-1">
-                    <span className={`text-[8px] px-1 rounded font-bold ${
-                      entry.strategy === 'flashbots' ? 'shock-purple' :
-                      entry.strategy === 'triangular' ? 'shock-yellow' :
-                      'shock-green'
-                    }`}>
+                    <span className="text-[8px] px-1 rounded shock-purple font-bold">
                       {entry.strategy}
                     </span>
                   </td>
                   <td className="py-1 px-1 shock-pink">
-                    {entry.buyDex.split(' ')[0]}→{entry.sellDex.split(' ')[0]}
+                    {entry.buyDex}→{entry.sellDex}
                   </td>
                   <td className="py-1 px-1 text-right shock-cyan font-mono">
                     ${entry.flashLoanAmount.toFixed(2)}

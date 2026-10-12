@@ -1,4 +1,4 @@
-import { ArbOpportunity } from '../utils/simulation';
+import { ArbOpportunity } from '../services/blockchain';
 
 interface ArbOpportunitiesProps {
   opportunities: ArbOpportunity[];
@@ -8,7 +8,7 @@ export default function ArbOpportunities({ opportunities }: ArbOpportunitiesProp
   return (
     <div className="box-green p-3">
       <h3 className="text-xs uppercase tracking-wider shock-pink mb-3 flex items-center gap-2 font-bold">
-        <span>⚡</span> Arbitrage Opportunities
+        <span>⚡</span> Real Arbitrage Opportunities
         <span className="ml-auto text-[10px] shock-pink">
           {opportunities.length} detected
         </span>
@@ -17,7 +17,7 @@ export default function ArbOpportunities({ opportunities }: ArbOpportunitiesProp
       {opportunities.length === 0 ? (
         <div className="text-center py-4 shock-cyan text-xs">
           <div className="text-2xl mb-2">⏳</div>
-          Scanning for cross-DEX price discrepancies...
+          Scanning Uniswap V3 pools for price discrepancies...
         </div>
       ) : (
         <div className="space-y-1 max-h-48 overflow-y-auto">
@@ -31,26 +31,17 @@ export default function ArbOpportunities({ opportunities }: ArbOpportunitiesProp
               }`}
             >
               <div className="flex items-center gap-2">
-                <span className={`px-1 rounded text-[8px] font-bold ${
-                  opp.chain === 'arbitrum' ? 'shock-cyan' : 'shock-pink'
-                }`}>
-                  {opp.chain === 'arbitrum' ? 'ARB' : 'POL'}
-                </span>
                 <span className="shock-cyan font-bold">
                   {opp.pair[0]}/{opp.pair[1]}
                 </span>
-                <span className={`text-[8px] px-1 rounded font-bold ${
-                  opp.strategy === 'flashbots' ? 'shock-purple' :
-                  opp.strategy === 'triangular' ? 'shock-yellow' :
-                  'shock-green'
-                }`}>
+                <span className="shock-purple text-[8px] font-bold">
                   {opp.strategy}
                 </span>
               </div>
 
               <div className="flex items-center gap-3">
                 <span className="shock-pink">
-                  {opp.buyDex.split(' ')[0]} → {opp.sellDex.split(' ')[0]}
+                  {opp.buyDex} → {opp.sellDex}
                 </span>
                 <span className="shock-yellow font-bold">{opp.spreadBps.toFixed(1)}bps</span>
                 <span className={`font-bold ${opp.netProfit > 0 ? 'shock-green' : 'shock-pink'}`}>
