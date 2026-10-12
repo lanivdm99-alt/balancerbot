@@ -15,6 +15,7 @@ import {
 import PerformanceMetrics from './components/PerformanceMetrics';
 import FluffyMonster, { MonsterCollection } from './components/FluffyMonster';
 import BotLeaderboard from './components/BotLeaderboard';
+import TestHarness from './components/TestHarness';
 
 const CONTRACT_CODE = `// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
@@ -125,6 +126,7 @@ function App() {
   const [scanProgress, setScanProgress] = useState({ current: 0, total: 0 });
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [showContractModal, setShowContractModal] = useState(false);
+  const [showTestHarness, setShowTestHarness] = useState(false);
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' | 'achievement' } | null>(null);
   const [isDryRun, setIsDryRun] = useState(true); // ✅ DRY RUN MODE - Safe testing first!
   const [performanceMetrics, setPerformanceMetrics] = useState({
@@ -772,6 +774,23 @@ function App() {
         </div>
       )}
 
+      {/* Test Harness Modal */}
+      {showTestHarness && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center">
+          <div className="max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-end mb-2">
+              <button
+                onClick={() => setShowTestHarness(false)}
+                className="shock-pink text-xl hover:scale-110 transition-transform bg-black/50 px-3 py-1 rounded"
+              >
+                ✕ Close
+              </button>
+            </div>
+            <TestHarness />
+          </div>
+        </div>
+      )}
+
       {/* DRY RUN Banner - Very Prominent! */}
       {walletConnected && isDryRun && (
         <div className="bg-yellow-500/20 border-b-2 border-yellow-500 px-4 py-2 flex items-center justify-between">
@@ -995,6 +1014,12 @@ function App() {
                   className="w-full px-3 py-2 rounded btn-green text-xs font-bold"
                 >
                   📜 View Contract
+                </button>
+                <button
+                  onClick={() => setShowTestHarness(true)}
+                  className="w-full px-3 py-2 rounded btn-cyan text-xs font-bold"
+                >
+                  🧪 Test Harness
                 </button>
                 <button
                   onClick={() => setWalletConnected(false)}

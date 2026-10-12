@@ -482,6 +482,13 @@ export class BlockchainService {
   getPoolCount(): number {
     return this.priceCache.size;
   }
+
+  /**
+   * Get the provider instance
+   */
+  getProvider(): ethers.JsonRpcProvider {
+    return this.provider;
+  }
 }
 
 export const blockchainService = new BlockchainService();
