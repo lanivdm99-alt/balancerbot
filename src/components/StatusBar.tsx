@@ -4,9 +4,10 @@ interface StatusBarProps {
   opportunities: number;
   executions: number;
   pnl: number;
+  capital?: number;
 }
 
-export default function StatusBar({ isRunning, isDryRun, opportunities, executions, pnl }: StatusBarProps) {
+export default function StatusBar({ isRunning, isDryRun, opportunities, executions, pnl, capital }: StatusBarProps) {
   const now = new Date();
   const timeStr = now.toLocaleTimeString('en-US', { hour12: false });
 
@@ -30,6 +31,14 @@ export default function StatusBar({ isRunning, isDryRun, opportunities, executio
       </div>
 
       <div className="flex items-center gap-4">
+        {capital !== undefined && (
+          <>
+            <span className="shock-purple">
+              💎 <span className="shock-green font-bold">${capital.toFixed(2)}</span>
+            </span>
+            <span className="shock-pink">|</span>
+          </>
+        )}
         <span className="shock-pink">
           PnL: <span className={`font-bold ${pnl >= 0 ? 'shock-green' : 'shock-pink'}`}>
             {pnl >= 0 ? '+' : ''}${pnl.toFixed(4)}

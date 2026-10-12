@@ -14,6 +14,7 @@ import ContractViewer from './components/ContractViewer';
 import StatusBar from './components/StatusBar';
 import FlashLoanPanel from './components/FlashLoanPanel';
 import DexPanel from './components/DexPanel';
+import CapitalPanel from './components/CapitalPanel';
 
 function App() {
   const [isRunning, setIsRunning] = useState(true);
@@ -29,6 +30,11 @@ function App() {
   const [scanProgress, setScanProgress] = useState({ current: 0, total: 0 });
   const [pnl, setPnl] = useState(0);
   const [scanDuration, setScanDuration] = useState(0);
+  
+  // Capital management for $4 starting capital
+  const STARTING_CAPITAL = 4.00;
+  const [currentCapital, setCurrentCapital] = useState(STARTING_CAPITAL);
+  const [transactionsUsed, setTransactionsUsed] = useState(0);
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -71,6 +77,10 @@ function App() {
         };
         setExecutionHistory(prev => [executedOpp, ...prev].slice(0, 50));
         setPnl(prev => prev + executedOpp.netProfit);
+        
+        // Update capital tracking
+        setCurrentCapital(prev => prev + executedOpp.netProfit);
+        setTransactionsUsed(prev => prev + 1);
       }
 
       setIsLoading(false);
@@ -158,6 +168,12 @@ function App() {
             <SpeedIndicator scanDuration={scanDuration} poolCount={priceCache.size} />
             <FlashLoanPanel providers={FLASH_LOAN_PROVIDERS} />
             <DexPanel dexs={DEXS} tokenCount={Object.keys(TOKENS).length} pairCount={PRIORITY_PAIRS.length} />
+            <CapitalPanel 
+              startingCapital={STARTING_CAPITAL}
+              currentCapital={currentCapital}
+              gasPrice={gasPrice}
+              transactionsRemaining={Math.max(0, Math.floor(currentCapital / 0.005))}
+            />
           </div>
 
           <div className="col-span-6 flex flex-col gap-3 overflow-y-auto">
@@ -196,6 +212,7 @@ function App() {
         opportunities={opportunities.length}
         executions={executionHistory.length}
         pnl={pnl}
+        capital={currentCapital}
       />
     </div>
   );
@@ -233,6 +250,57 @@ function SetupGuide() {
             <div className="flex items-center gap-2">
               <span className="shock-green font-bold">✓</span>
               <span>{Object.keys(FLASH_LOAN_PROVIDERS).length} Free Flash Loan Providers</span>
+            </div>
+          </div>
+        </section>
+
+        <section className="box-purple p-4">
+          <h3 className="text-lg shock-yellow font-bold mb-3">💎 $4 Starting Capital Strategy</h3>
+          <div className="space-y-3 shock-cyan text-xs">
+            <div className="border-l-2 border-purple-500 pl-3">
+              <p className="shock-green font-bold mb-1">✓ Your Budget</p>
+              <p>$4.00 MATIC on Polygon PoS</p>
+              <p className="shock-yellow mt-1">≈ 800 transactions @ $0.005 avg gas</p>
+            </div>
+            
+            <div className="border-l-2 border-purple-500 pl-3">
+              <p className="shock-green font-bold mb-1">✓ Flash Loans = FREE Capital</p>
+              <p>Borrow up to pool liquidity (no collateral needed)</p>
+              <p className="shock-yellow mt-1">Only pay gas (~$0.005) + MEV tip (90% of profit)</p>
+            </div>
+
+            <div className="border-l-2 border-purple-500 pl-3">
+              <p className="shock-green font-bold mb-1">✓ Minimum Profitable Trade</p>
+              <p>Need &gt; $0.01 profit after gas + MEV tip</p>
+              <p className="shock-yellow mt-1">Target: $0.01-0.05 per successful trade</p>
+            </div>
+
+            <div className="border-l-2 border-purple-500 pl-3">
+              <p className="shock-green font-bold mb-1">✓ Growth Path</p>
+              <div className="grid grid-cols-3 gap-2 mt-1">
+                <div className="text-center">
+                  <div className="shock-pink font-bold">$4</div>
+                  <div className="text-[9px]">Start</div>
+                </div>
+                <div className="text-center">
+                  <div className="shock-yellow font-bold">$10</div>
+                  <div className="text-[9px]">~120 trades</div>
+                </div>
+                <div className="text-center">
+                  <div className="shock-green font-bold">$50</div>
+                  <div className="text-[9px]">~600 trades</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="border-l-2 border-pink-500 pl-3 bg-pink-500/10 p-2 rounded">
+              <p className="shock-pink font-bold mb-1">⚠️ Critical Rules</p>
+              <ul className="list-disc list-inside space-y-1">
+                <li>Start in DRY RUN mode (no real transactions)</li>
+                <li>Only execute trades with &gt; $0.01 net profit</li>
+                <li>Monitor gas prices (skip if &gt; 50 Gwei)</li>
+                <li>Stop if capital drops below $1</li>
+              </ul>
             </div>
           </div>
         </section>
