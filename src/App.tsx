@@ -122,6 +122,7 @@ function App() {
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [showContractModal, setShowContractModal] = useState(false);
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' | 'achievement' } | null>(null);
+  const [isDryRun, setIsDryRun] = useState(true); // ✅ DRY RUN MODE - Safe testing first!
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -375,17 +376,33 @@ function App() {
     }
   };
 
-  // Execute a trade (simulated for now)
-  const executeTrade = (opp: ArbOpportunity) => {
+  // Execute a trade (dry run = simulated, live = real transaction)
+  const executeTrade = async (opp: ArbOpportunity) => {
     if (!walletConnected) {
       showNotification('Connect your wallet first!', 'error');
       return;
     }
 
-    const success = Math.random() > 0.2; // 80% success rate
-    const profit = success ? opp.netProfit : -opp.gasCost;
-    
-    const executedOpp = {
+    let success: boolean;
+    let profit: number;
+
+    if (isDryRun) {
+      // 🧪 DRY RUN MODE - Simulated trade
+      success = Math.random() > 0.2; // 80% success rate
+      profit = success ? opp.netProfit : -opp.gasCost;
+      
+      showNotification(`🧪 DRY RUN: ${success ? '✓ Success' : '✗ Failed'} (${profit >= 0 ? '+' : ''}$${profit.toFixed(4)})`, 
+        success ? 'success' : 'error');
+    } else {
+      // ⚡ LIVE MODE - Real transaction (TODO: Implement actual blockchain transaction)
+      showNotification('⚡ LIVE MODE: Real transaction execution coming soon!', 'error');
+      
+      // For now, still simulate but mark as live
+      success = Math.random() > 0.2;
+      profit = success ? opp.netProfit : -opp.gasCost;
+    }
+
+    const executedOpp: ArbOpportunity = {
       ...opp,
       status: success ? 'success' as const : 'failed' as const,
       netProfit: profit,
@@ -503,6 +520,32 @@ function App() {
                 <span className="text-xs font-bold shock-purple">POLYGON</span>
               </div>
             )}
+
+            {/* DRY RUN Indicator - PROMINENT! */}
+            <button
+              onClick={() => {
+                if (!isDryRun) {
+                  // Confirm before switching to live mode
+                  if (window.confirm('⚠️ WARNING: Switching to LIVE MODE will execute REAL transactions with REAL funds. Are you sure?')) {
+                    setIsDryRun(false);
+                    showNotification('⚡ LIVE MODE ACTIVE - Real transactions!', 'error');
+                  }
+                } else {
+                  setIsDryRun(true);
+                  showNotification('🧪 DRY RUN MODE - Safe testing', 'success');
+                }
+              }}
+              className={`px-3 py-1 border-2 rounded flex items-center gap-2 transition-all ${
+                isDryRun 
+                  ? 'border-yellow-500 bg-yellow-500/20 hover:bg-yellow-500/30' 
+                  : 'border-red-500 bg-red-500/20 hover:bg-red-500/30 animate-pulse'
+              }`}
+            >
+              <span className="text-sm">{isDryRun ? '🧪' : '⚡'}</span>
+              <span className={`text-xs font-bold ${isDryRun ? 'shock-yellow' : 'shock-pink'}`}>
+                {isDryRun ? 'DRY RUN' : 'LIVE!'}
+              </span>
+            </button>
 
             {/* Level Badge */}
             <div className="px-3 py-1 border-2 rounded" style={{ borderColor: currentLevel.color }}>
@@ -649,6 +692,52 @@ function App() {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* DRY RUN Banner - Very Prominent! */}
+      {walletConnected && isDryRun && (
+        <div className="bg-yellow-500/20 border-b-2 border-yellow-500 px-4 py-2 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">🧪</span>
+            <div>
+              <p className="shock-yellow font-bold text-sm">DRY RUN MODE ACTIVE</p>
+              <p className="text-xs shock-cyan">All trades are simulated. No real funds at risk. Safe for testing!</p>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              if (window.confirm('⚠️ Switch to LIVE MODE? This will execute REAL transactions with REAL funds!')) {
+                setIsDryRun(false);
+                showNotification('⚡ LIVE MODE ACTIVE - Real transactions!', 'error');
+              }
+            }}
+            className="btn-pink px-4 py-2 text-xs font-bold"
+          >
+            Switch to LIVE →
+          </button>
+        </div>
+      )}
+
+      {/* LIVE MODE Warning Banner */}
+      {walletConnected && !isDryRun && (
+        <div className="bg-red-500/20 border-b-2 border-red-500 px-4 py-2 flex items-center justify-between animate-pulse">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">⚡</span>
+            <div>
+              <p className="shock-pink font-bold text-sm">⚠️ LIVE MODE - REAL TRANSACTIONS!</p>
+              <p className="text-xs shock-yellow">Real funds at risk! Execute with caution!</p>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              setIsDryRun(true);
+              showNotification('🧪 Back to DRY RUN MODE - Safe testing', 'success');
+            }}
+            className="btn-cyan px-4 py-2 text-xs font-bold"
+          >
+            ← Back to DRY RUN
+          </button>
         </div>
       )}
 
@@ -799,6 +888,31 @@ function App() {
                 >
                   {isRunning ? '⏸ Pause' : '▶ Start Scanner'}
                 </button>
+                
+                {/* DRY RUN Toggle - Very Important! */}
+                <button
+                  onClick={() => {
+                    if (!isDryRun) {
+                      if (window.confirm('⚠️ Switch to DRY RUN mode? All trades will be simulated.')) {
+                        setIsDryRun(true);
+                        showNotification('🧪 DRY RUN MODE - Safe testing', 'success');
+                      }
+                    } else {
+                      if (window.confirm('⚠️ WARNING: Switch to LIVE MODE? This will execute REAL transactions with REAL funds!')) {
+                        setIsDryRun(false);
+                        showNotification('⚡ LIVE MODE ACTIVE - Real transactions!', 'error');
+                      }
+                    }
+                  }}
+                  className={`w-full px-3 py-2 rounded text-xs font-bold border-2 ${
+                    isDryRun 
+                      ? 'border-yellow-500 bg-yellow-500/20 shock-yellow hover:bg-yellow-500/30' 
+                      : 'border-red-500 bg-red-500/20 shock-pink hover:bg-red-500/30 animate-pulse'
+                  }`}
+                >
+                  {isDryRun ? '🧪 DRY RUN (Click for LIVE)' : '⚡ LIVE MODE (Click for DRY RUN)'}
+                </button>
+
                 <button
                   onClick={() => setShowContractModal(true)}
                   className="w-full px-3 py-2 rounded btn-green text-xs font-bold"

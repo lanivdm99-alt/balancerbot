@@ -2,6 +2,21 @@
 
 A gamified flash loan arbitrage bot for Polygon PoS with real-time price scanning, achievement system, Flashbots MEV-Share integration, and Bitget Wallet support.
 
+## 🧪 DRY RUN MODE - Start Here!
+
+**⚡ FLASH-X starts in DRY RUN mode by default - and that's CORRECT!**
+
+- ✅ **SAFE** - No real funds at risk
+- ✅ **SIMULATED** - All trades are simulated (80% success rate)
+- ✅ **LEARNING** - Perfect for testing and learning
+- ✅ **VIRTUAL** - Capital tracking is virtual, not real money
+
+**You can switch to LIVE mode later when you're ready, but DRY RUN first is the safe approach!**
+
+📖 **Full Guide**: See [DRY_RUN_MODE.md](./DRY_RUN_MODE.md)
+
+---
+
 ## 🚀 Features
 
 ### 🟡 Bitget Wallet Integration
