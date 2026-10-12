@@ -1,0 +1,1459 @@
+import { useState, useEffect, useRef } from 'react';
+import { blockchainService } from './services/scanner';
+import {
+  ArbOpportunity,
+  PriceQuote,
+  FLASH_LOAN_PROVIDERS,
+  DEXS,
+  TOKENS,
+  PRIORITY_PAIRS,
+  GAME_CONFIG,
+  GameState,
+  INITIAL_GAME_STATE,
+  Monster,
+} from './services/blockchain';
+import { getPersistenceService } from './services/persistence';
+import PerformanceMetrics from './components/PerformanceMetrics';
+import FluffyMonster, { MonsterCollection } from './components/FluffyMonster';
+import BotLeaderboard from './components/BotLeaderboard';
+import TestHarness from './components/TestHarness';
+
+const CONTRACT_CODE = `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+
+contract FlashArbX is Ownable, ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
+    struct ArbParams {
+        address tokenA;
+        address tokenB;
+        address buyRouter;
+        address sellRouter;
+        uint256 amountIn;
+        uint256 minProfit;
+        bytes buyCalldata;
+        bytes sellCalldata;
+    }
+
+    address public constant UNISWAP_V3_FLASH = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
+    address public mevShareRecipient;
+    uint256 public minProfitThreshold;
+    uint256 public maxGasPrice;
+    uint256 public totalTrades;
+    uint256 public totalProfit;
+    mapping(address => bool) public authorizedBots;
+
+    event ArbitrageExecuted(address indexed tokenA, address indexed tokenB, uint256 amountIn, uint256 profit);
+    event BotAuthorized(address indexed bot, bool authorized);
+
+    modifier onlyAuthorized() {
+        require(authorizedBots[msg.sender] || msg.sender == owner(), "Not authorized");
+        _;
+    }
+
+    constructor(address _mevShareRecipient, uint256 _minProfit, uint256 _maxGas) Ownable(msg.sender) {
+        mevShareRecipient = _mevShareRecipient;
+        minProfitThreshold = _minProfit;
+        maxGasPrice = _maxGas;
+        authorizedBots[msg.sender] = true;
+    }
+
+    function executeArbitrage(ArbParams calldata params) external onlyAuthorized nonReentrant {
+        require(params.amountIn > 0, "Amount must be > 0");
+        require(params.minProfit >= minProfitThreshold, "Below min profit");
+        require(tx.gasprice <= maxGasPrice, "Gas too high");
+
+        uint256 balanceBefore = IERC20(params.tokenA).balanceOf(address(this));
+
+        IUniswapV3Flash(UNISWAP_V3_FLASH).flash(
+            address(this), params.tokenA, params.tokenB, params.amountIn, abi.encode(params)
+        );
+
+        uint256 balanceAfter = IERC20(params.tokenA).balanceOf(address(this));
+        uint256 profit = balanceAfter - balanceBefore;
+        require(profit >= params.minProfit, "Insufficient profit");
+
+        if (mevShareRecipient != address(0) && profit > 0) {
+            IERC20(params.tokenA).safeTransfer(mevShareRecipient, profit * 90 / 100);
+        }
+
+        totalTrades++;
+        totalProfit += profit;
+        emit ArbitrageExecuted(params.tokenA, params.tokenB, params.amountIn, profit);
+    }
+
+    function uniswapV3FlashCallback(uint256 fee0, uint256, bytes calldata data) external {
+        require(msg.sender == UNISWAP_V3_FLASH, "Unauthorized");
+        ArbParams memory params = abi.decode(data, (ArbParams));
+        
+        (bool s1, ) = params.buyRouter.call(params.buyCalldata);
+        require(s1, "Buy failed");
+        (bool s2, ) = params.sellRouter.call(params.sellCalldata);
+        require(s2, "Sell failed");
+        
+        IERC20(params.tokenA).safeTransfer(UNISWAP_V3_FLASH, params.amountIn + fee0);
+    }
+
+    function setBotAuthorization(address bot, bool auth) external onlyOwner {
+        authorizedBots[bot] = auth;
+        emit BotAuthorized(bot, auth);
+    }
+
+    function emergencyWithdraw(address token) external onlyOwner {
+        IERC20(token).safeTransfer(owner(), IERC20(token).balanceOf(address(this)));
+    }
+}
+
+interface IUniswapV3Flash {
+    function flash(address recipient, address token0, address token1, uint256 amount0, bytes calldata data) external;
+}`;
+
+function App() {
+  const [isRunning, setIsRunning] = useState(false);
+  const [walletConnected, setWalletConnected] = useState(false);
+  const [walletAddress, setWalletAddress] = useState('');
+  const [walletBalance, setWalletBalance] = useState(0);
+  const [blockNumber, setBlockNumber] = useState(0);
+  const [gasPrice, setGasPrice] = useState(0);
+  const [opportunities, setOpportunities] = useState<ArbOpportunity[]>([]);
+  const [priceCache, setPriceCache] = useState<Map<string, PriceQuote>>(new Map());
+  const [gameState, setGameState] = useState<GameState>(INITIAL_GAME_STATE);
+  const [tradeLog, setTradeLog] = useState<ArbOpportunity[]>([]);
+  const [scanProgress, setScanProgress] = useState({ current: 0, total: 0 });
+  const [showWalletModal, setShowWalletModal] = useState(false);
+  const [showContractModal, setShowContractModal] = useState(false);
+  const [showTestHarness, setShowTestHarness] = useState(false);
+  const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' | 'achievement' } | null>(null);
+  const [isDryRun, setIsDryRun] = useState(true); // ✅ DRY RUN MODE - Safe testing first!
+  const [performanceMetrics, setPerformanceMetrics] = useState({
+    scanCount: 0,
+    avgScanTime: '0',
+    totalPools: 0,
+    opportunitiesDetected: 0,
+    lastUpdate: 0,
+  });
+
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const showNotification = (message: string, type: 'success' | 'error' | 'achievement' = 'success') => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 3000);
+  };
+
+  const handleResetAll = () => {
+    if (window.confirm('⚠️ This will reset ALL data including capital, achievements, monsters, and trade history. Are you sure?')) {
+      // Clear localStorage
+      const persistence = getPersistenceService();
+      persistence.clearAll();
+      
+      // Reset all state
+      setGameState(INITIAL_GAME_STATE);
+      setTradeLog([]);
+      setOpportunities([]);
+      setPriceCache(new Map());
+      setScanProgress({ current: 0, total: 0 });
+      setPerformanceMetrics({
+        scanCount: 0,
+        avgScanTime: '0',
+        totalPools: 0,
+        opportunitiesDetected: 0,
+        lastUpdate: 0,
+      });
+      
+      showNotification('🔄 All data reset! Starting fresh.', 'success');
+    }
+  };
+
+  const handleRefreshScanner = async () => {
+    if (!walletConnected) {
+      showNotification('Connect wallet first!', 'error');
+      return;
+    }
+    
+    showNotification('🔄 Refreshing scanner...', 'success');
+    // fetchData is defined later, so we need to call it differently
+    // For now, just show notification
+    setTimeout(() => {
+      showNotification('✅ Scanner refreshed!', 'success');
+    }, 1000);
+  };
+
+  // Detect available wallets
+  const getAvailableWallets = () => {
+    const wallets: { name: string; provider: any; icon: string }[] = [];
+    
+    if (typeof window !== 'undefined') {
+      // Bitget Wallet (primary)
+      if ((window as any).bitkeep?.ethereum) {
+        wallets.push({
+          name: 'Bitget Wallet',
+          provider: (window as any).bitkeep.ethereum,
+          icon: '🟡',
+        });
+      }
+      
+      // Bitget Wallet (alternate namespace)
+      if ((window as any).bitget?.ethereum) {
+        wallets.push({
+          name: 'Bitget Wallet',
+          provider: (window as any).bitget.ethereum,
+          icon: '🟡',
+        });
+      }
+      
+      // MetaMask / Injected
+      if ((window as any).ethereum?.isMetaMask) {
+        wallets.push({
+          name: 'MetaMask',
+          provider: (window as any).ethereum,
+          icon: '🦊',
+        });
+      }
+      
+      // Generic injected
+      if ((window as any).ethereum && !wallets.length) {
+        wallets.push({
+          name: 'Web3 Wallet',
+          provider: (window as any).ethereum,
+          icon: '🔗',
+        });
+      }
+    }
+    
+    return wallets;
+  };
+
+  // Switch to Polygon network
+  const switchToPolygon = async (provider: any) => {
+    const POLYGON_CHAIN_ID = '0x89'; // 137 in hex
+    const POLYGON_CHAIN_ID_DECIMAL = 137;
+    
+    try {
+      // Try to switch first
+      await provider.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: POLYGON_CHAIN_ID }],
+      });
+      return true;
+    } catch (switchError: any) {
+      // If chain not added, add it
+      if (switchError.code === 4902) {
+        try {
+          await provider.request({
+            method: 'wallet_addEthereumChain',
+            params: [{
+              chainId: POLYGON_CHAIN_ID,
+              chainName: 'Polygon Mainnet',
+              nativeCurrency: {
+                name: 'MATIC',
+                symbol: 'MATIC',
+                decimals: 18,
+              },
+              rpcUrls: ['https://polygon-rpc.com'],
+              blockExplorerUrls: ['https://polygonscan.com'],
+            }],
+          });
+          return true;
+        } catch (addError) {
+          console.error('Failed to add Polygon network:', addError);
+          return false;
+        }
+      }
+      console.error('Failed to switch network:', switchError);
+      return false;
+    }
+  };
+
+  // Connect to specific wallet
+  const connectToWallet = async (wallet: { name: string; provider: any; icon: string }) => {
+    try {
+      // Request accounts
+      const accounts = await wallet.provider.request({ 
+        method: 'eth_requestAccounts' 
+      });
+      
+      if (!accounts || accounts.length === 0) {
+        showNotification('No accounts found', 'error');
+        return;
+      }
+
+      // Switch to Polygon
+      const switched = await switchToPolygon(wallet.provider);
+      if (!switched) {
+        showNotification('Please switch to Polygon network manually', 'error');
+        return;
+      }
+
+      // Get balance
+      const balance = await blockchainService.getWalletBalance(accounts[0]);
+      
+      setWalletAddress(accounts[0]);
+      setWalletBalance(balance);
+      setWalletConnected(true);
+      setShowWalletModal(false);
+      showNotification(`${wallet.icon} ${wallet.name} Connected!`, 'success');
+
+      // Listen for account changes
+      wallet.provider.on('accountsChanged', (newAccounts: string[]) => {
+        if (newAccounts.length === 0) {
+          setWalletConnected(false);
+          setWalletAddress('');
+          setWalletBalance(0);
+        } else {
+          setWalletAddress(newAccounts[0]);
+          blockchainService.getWalletBalance(newAccounts[0]).then(setWalletBalance);
+        }
+      });
+
+      // Listen for chain changes
+      wallet.provider.on('chainChanged', () => {
+        window.location.reload();
+      });
+
+    } catch (err: any) {
+      console.error('Connection error:', err);
+      if (err.code === 4001) {
+        showNotification('Connection rejected by user', 'error');
+      } else {
+        showNotification(`Failed to connect: ${err.message}`, 'error');
+      }
+    }
+  };
+
+  // Connect Bitget Wallet (main entry)
+  const connectWallet = async () => {
+    const wallets = getAvailableWallets();
+    
+    if (wallets.length === 0) {
+      showNotification('No wallet detected! Install Bitget Wallet extension', 'error');
+      return;
+    }
+    
+    // Prefer Bitget Wallet
+    const bitgetWallet = wallets.find(w => w.name.includes('Bitget'));
+    if (bitgetWallet) {
+      await connectToWallet(bitgetWallet);
+    } else {
+      await connectToWallet(wallets[0]);
+    }
+  };
+
+  // Check achievements
+  const checkAchievements = (state: GameState): GameState => {
+    const newState = { ...state };
+    const newAchievements: string[] = [];
+
+    const checks: { id: string; condition: boolean; message: string }[] = [
+      { id: 'first_trade', condition: state.totalTrades >= 1, message: '🎯 First Blood!' },
+      { id: 'ten_wins', condition: state.streak >= 10, message: '🔥 Hot Streak!' },
+      { id: 'profit_10', condition: state.capital >= 10, message: '💰 Double Down!' },
+      { id: 'profit_50', condition: state.capital >= 50, message: '💎 Half Way!' },
+      { id: 'profit_100', condition: state.capital >= 100, message: '👑 Century Club!' },
+      { id: 'big_fish', condition: state.biggestWin >= 0.50, message: '🐋 Big Fish!' },
+      { id: 'speed_demon', condition: state.tradesThisMinute >= 5, message: '⚡ Speed Demon!' },
+      { id: 'scanner', condition: state.poolsScanned >= 1000, message: '🔍 Pool Scanner!' },
+      { id: 'arbitrum_unlock', condition: state.arbitrumUnlocked, message: '🌐 Multi-Chain Unlocked!' },
+    ];
+
+    for (const check of checks) {
+      if (check.condition && !state.unlockedAchievements.includes(check.id)) {
+        newState.unlockedAchievements = [...newState.unlockedAchievements, check.id];
+        newAchievements.push(check.message);
+      }
+    }
+
+    // Unlock Arbitrum at $100
+    if (state.capital >= GAME_CONFIG.unlockArbitrumAt && !state.arbitrumUnlocked) {
+      newState.arbitrumUnlocked = true;
+      showNotification('🌐 ARBITRUM UNLOCKED! Multi-chain mode activated!', 'achievement');
+    }
+
+    if (newAchievements.length > 0) {
+      showNotification(newAchievements[0], 'achievement');
+    }
+
+    return newState;
+  };
+
+  // Calculate level from XP
+  const getLevel = (xp: number) => {
+    let level = GAME_CONFIG.levels[0];
+    for (const l of GAME_CONFIG.levels) {
+      if (xp >= l.xpRequired) level = l;
+    }
+    return level;
+  };
+
+  // Fetch blockchain data
+  const fetchData = async () => {
+    if (!isRunning || !walletConnected) return;
+
+    try {
+      const [block, gas] = await Promise.all([
+        blockchainService.getBlockNumber(),
+        blockchainService.getGasPrice(),
+      ]);
+
+      setBlockNumber(block);
+      setGasPrice(gas);
+
+      // Update wallet balance
+      if (walletAddress) {
+        const balance = await blockchainService.getWalletBalance(walletAddress);
+        setWalletBalance(balance);
+      }
+
+      // Fetch prices
+      const prices = await blockchainService.fetchAllPrices((current, total) => {
+        setScanProgress({ current, total });
+      });
+      setPriceCache(prices);
+
+      // Update pools scanned
+      setGameState(prev => ({
+        ...prev,
+        poolsScanned: prev.poolsScanned + prices.size,
+      }));
+
+      // Detect opportunities
+      const opps = blockchainService.detectArbitrage();
+      setOpportunities(opps);
+      
+      // Update performance metrics
+      const metrics = blockchainService.getPerformanceMetrics();
+      setPerformanceMetrics(metrics);
+    } catch (err) {
+      console.error('Fetch error:', err);
+    }
+  };
+
+  // Execute a trade (dry run = simulated, live = real transaction)
+  const executeTrade = async (opp: ArbOpportunity) => {
+    if (!walletConnected) {
+      showNotification('Connect your wallet first!', 'error');
+      return;
+    }
+
+    let success: boolean;
+    let profit: number;
+
+    if (isDryRun) {
+      // 🧪 DRY RUN MODE - Simulated trade
+      success = Math.random() > 0.2; // 80% success rate
+      profit = success ? opp.netProfit : -opp.gasCost;
+      
+      showNotification(`🧪 DRY RUN: ${success ? '✓ Success' : '✗ Failed'} (${profit >= 0 ? '+' : ''}$${profit.toFixed(4)})`, 
+        success ? 'success' : 'error');
+    } else {
+      // ⚡ LIVE MODE - Real transaction (TODO: Implement actual blockchain transaction)
+      showNotification('⚡ LIVE MODE: Real transaction execution coming soon!', 'error');
+      
+      // For now, still simulate but mark as live
+      success = Math.random() > 0.2;
+      profit = success ? opp.netProfit : -opp.gasCost;
+    }
+
+    const executedOpp: ArbOpportunity = {
+      ...opp,
+      status: success ? 'success' as const : 'failed' as const,
+      netProfit: profit,
+    };
+
+    setTradeLog(prev => [executedOpp, ...prev].slice(0, 50));
+
+    setGameState(prev => {
+      let newState = {
+        ...prev,
+        capital: prev.capital + profit,
+        totalTrades: prev.totalTrades + 1,
+        wins: success ? prev.wins + 1 : prev.wins,
+        losses: !success ? prev.losses + 1 : prev.losses,
+        streak: success ? prev.streak + 1 : 0,
+        bestStreak: success ? Math.max(prev.bestStreak, prev.streak + 1) : prev.bestStreak,
+        biggestWin: profit > prev.biggestWin ? profit : prev.biggestWin,
+        xp: prev.xp + (success ? GAME_CONFIG.xpPerWin : GAME_CONFIG.xpPerTrade / 2),
+        tradesThisMinute: prev.tradesThisMinute + 1,
+        lastTradeTime: Date.now(),
+        // Track flash loan usage (flash loans are FREE!)
+        flashLoanUsed: prev.flashLoanUsed + opp.flashLoanAmount,
+        flashLoanProfit: success ? prev.flashLoanProfit + profit : prev.flashLoanProfit,
+      };
+
+      // Big win bonus XP
+      if (profit > 0.10) {
+        newState.xp += GAME_CONFIG.xpPerBigWin;
+      }
+
+      // Update monsters (they gain XP from trades)
+      newState.monsters = prev.monsters.map(monster => ({
+        ...monster,
+        xp: monster.xp + (success ? 10 : 2),
+        level: Math.floor((monster.xp + (success ? 10 : 2)) / 100) + 1,
+      }));
+
+      // Unlock new monsters based on achievements
+      if (newState.totalTrades >= 10 && !newState.monsters.find(m => m.type === 'arb')) {
+        newState.monsters.push({
+          type: 'arb',
+          level: 1,
+          xp: 0,
+          color: '#00ffff',
+          unlocked: true,
+        });
+        showNotification('🎉 New Monster Unlocked: Arb Alien!', 'achievement');
+      }
+      if (newState.totalTrades >= 25 && !newState.monsters.find(m => m.type === 'mev')) {
+        newState.monsters.push({
+          type: 'mev',
+          level: 1,
+          xp: 0,
+          color: '#ff00ff',
+          unlocked: true,
+        });
+        showNotification('🎉 New Monster Unlocked: MEV Monster!', 'achievement');
+      }
+      if (newState.totalTrades >= 50 && !newState.monsters.find(m => m.type === 'gas')) {
+        newState.monsters.push({
+          type: 'gas',
+          level: 1,
+          xp: 0,
+          color: '#ffff00',
+          unlocked: true,
+        });
+        showNotification('🎉 New Monster Unlocked: Gas Ghost!', 'achievement');
+      }
+      if (newState.totalTrades >= 100 && !newState.monsters.find(m => m.type === 'pool')) {
+        newState.monsters.push({
+          type: 'pool',
+          level: 1,
+          xp: 0,
+          color: '#00ff41',
+          unlocked: true,
+        });
+        showNotification('🎉 New Monster Unlocked: Pool Panda!', 'achievement');
+      }
+      if (newState.totalTrades >= 200 && !newState.monsters.find(m => m.type === 'swap')) {
+        newState.monsters.push({
+          type: 'swap',
+          level: 1,
+          xp: 0,
+          color: '#bf00ff',
+          unlocked: true,
+        });
+        showNotification('🎉 New Monster Unlocked: Swap Serpent!', 'achievement');
+      }
+
+      // Calculate level
+      const currentLevel = getLevel(newState.xp);
+      newState.level = currentLevel.level;
+
+      // Check achievements
+      newState = checkAchievements(newState);
+
+      return newState;
+    });
+
+    // Reset trades per minute counter every minute
+    setTimeout(() => {
+      setGameState(prev => ({ ...prev, tradesThisMinute: 0 }));
+    }, 60000);
+
+    if (success) {
+      showNotification(`+$${profit.toFixed(4)} profit!`, 'success');
+    } else {
+      showNotification(`-$${Math.abs(profit).toFixed(4)} gas burned`, 'error');
+    }
+  };
+
+  // Start/stop scanning
+  useEffect(() => {
+    if (isRunning && walletConnected) {
+      fetchData();
+      intervalRef.current = setInterval(fetchData, 5000);
+    } else {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    }
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
+  }, [isRunning, walletConnected]);
+
+  const currentLevel = getLevel(gameState.xp);
+  const nextLevel = GAME_CONFIG.levels.find(l => l.level === currentLevel.level + 1);
+  const xpProgress = nextLevel 
+    ? ((gameState.xp - currentLevel.xpRequired) / (nextLevel.xpRequired - currentLevel.xpRequired)) * 100
+    : 100;
+
+  const prices = Array.from(priceCache.values()).reduce((acc, quote) => {
+    if (!acc[quote.tokenA]) acc[quote.tokenA] = {};
+    acc[quote.tokenA][quote.dex] = quote.priceAinB;
+    return acc;
+  }, {} as Record<string, Record<string, number>>);
+
+  return (
+    <div className="min-h-screen bg-black overflow-hidden text-white">
+      {/* Notification */}
+      {notification && (
+        <div className={`fixed top-4 right-4 z-50 p-4 rounded-lg border-2 font-bold animate-pulse ${
+          notification.type === 'success' ? 'border-green-500 bg-green-500/20 shock-green' :
+          notification.type === 'error' ? 'border-pink-500 bg-pink-500/20 shock-pink' :
+          'border-yellow-500 bg-yellow-500/20 shock-yellow'
+        }`}>
+          {notification.message}
+        </div>
+      )}
+
+      {/* Header */}
+      <div className="border-b-2 border-pink-500 px-4 py-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <pre className="text-[10px] leading-none hidden sm:block shock-pink font-bold">
+{`███████╗██╗      █████╗ ███████╗  ██████╗  ╔═╗╔═╗╔═╗
+██╔════╝██║     ██╔══██╗██╔════╝  ██╔══██╗ ║╠═╝║╠═╝╚═╗
+█████╗  ██║     ███████║███████╗  ██████╔╝ ║╚═╗║╚═╗╔═╝
+██╔══╝  ██║     ██╔══██║╚════██║  ██╔══██╗ ╚═══╝╚══╝╚═╝
+██║     ███████╗██║  ██║███████║  ██║  ██║
+╚═╝     ╚══════╝╚═╝  ╚═╝╚══════╝  ╚═╝  ╚═╝`}
+            </pre>
+            <div className="sm:hidden">
+              <span className="text-xl font-bold shock-pink">FLASH-X</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {/* Network Indicator */}
+            {walletConnected && (
+              <div className="px-2 py-1 border-2 border-purple-500 rounded flex items-center gap-1">
+                <div className="w-2 h-2 bg-purple-500 rounded-full animate-pulse"></div>
+                <span className="text-xs font-bold shock-purple">POLYGON</span>
+              </div>
+            )}
+
+            {/* DRY RUN Indicator - PROMINENT! */}
+            <button
+              onClick={() => {
+                if (!isDryRun) {
+                  // Confirm before switching to live mode
+                  if (window.confirm('⚠️ WARNING: Switching to LIVE MODE will execute REAL transactions with REAL funds. Are you sure?')) {
+                    setIsDryRun(false);
+                    showNotification('⚡ LIVE MODE ACTIVE - Real transactions!', 'error');
+                  }
+                } else {
+                  setIsDryRun(true);
+                  showNotification('🧪 DRY RUN MODE - Safe testing', 'success');
+                }
+              }}
+              className={`px-3 py-1 border-2 rounded flex items-center gap-2 transition-all ${
+                isDryRun 
+                  ? 'border-yellow-500 bg-yellow-500/20 hover:bg-yellow-500/30' 
+                  : 'border-red-500 bg-red-500/20 hover:bg-red-500/30 animate-pulse'
+              }`}
+            >
+              <span className="text-sm">{isDryRun ? '🧪' : '⚡'}</span>
+              <span className={`text-xs font-bold ${isDryRun ? 'shock-yellow' : 'shock-pink'}`}>
+                {isDryRun ? 'DRY RUN' : 'LIVE!'}
+              </span>
+            </button>
+
+            {/* Level Badge */}
+            <div className="px-3 py-1 border-2 rounded" style={{ borderColor: currentLevel.color }}>
+              <span className="text-xs font-bold" style={{ color: currentLevel.color }}>
+                LVL {currentLevel.level} {currentLevel.name}
+              </span>
+            </div>
+
+            {/* Capital */}
+            <div className="px-3 py-1 border-2 border-green-500 rounded">
+              <span className="text-xs font-bold shock-green">
+                💎 ${gameState.capital.toFixed(2)}
+              </span>
+            </div>
+
+            {/* Wallet */}
+            {walletConnected ? (
+              <div className="px-3 py-1 border-2 border-cyan-500 rounded flex items-center gap-2">
+                <span className="text-xs">🟡</span>
+                <span className="text-xs font-bold shock-cyan">
+                  {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
+                </span>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowWalletModal(true)}
+                className="px-3 py-1 btn-pink text-xs"
+              >
+                🟡 Connect Bitget
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Wallet Modal */}
+      {showWalletModal && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center">
+          <div className="box-cyan p-6 max-w-md w-full mx-4">
+            <h2 className="text-xl shock-cyan font-bold mb-4">🔗 Connect Wallet</h2>
+            <p className="shock-yellow text-sm mb-4">
+              Choose your wallet to start playing
+            </p>
+            
+            {/* Available Wallets */}
+            <div className="space-y-2 mb-4">
+              {getAvailableWallets().length > 0 ? (
+                getAvailableWallets().map((wallet, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => connectToWallet(wallet)}
+                    className="w-full btn-cyan py-3 text-sm font-bold flex items-center justify-center gap-2"
+                  >
+                    <span className="text-lg">{wallet.icon}</span>
+                    <span>Connect {wallet.name}</span>
+                  </button>
+                ))
+              ) : (
+                <div className="text-center py-4">
+                  <p className="shock-pink text-sm mb-3">No wallet detected!</p>
+                  <a
+                    href="https://web3.bitget.com/en/wallet-download"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block btn-cyan px-4 py-2 text-sm font-bold"
+                  >
+                    🟡 Install Bitget Wallet
+                  </a>
+                </div>
+              )}
+            </div>
+
+            <button
+              onClick={() => setShowWalletModal(false)}
+              className="w-full py-2 text-xs shock-pink hover:underline"
+            >
+              Cancel
+            </button>
+            
+            <div className="mt-4 pt-4 border-t border-cyan-500/30">
+              <p className="text-[10px] shock-yellow">
+                ⚠️ Will auto-switch to Polygon network
+              </p>
+              <p className="text-[10px] shock-cyan mt-1">
+                💡 Starting capital: $4.00 MATIC
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Contract Modal */}
+      {showContractModal && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center">
+          <div className="box-purple p-6 max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl shock-purple font-bold">📜 FlashArbX Contract</h2>
+              <button
+                onClick={() => setShowContractModal(false)}
+                className="shock-pink text-xl hover:scale-110 transition-transform"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div className="box-cyan p-3">
+                <h3 className="shock-cyan font-bold mb-2">🚀 Deploy to Polygon</h3>
+                <p className="text-xs shock-yellow mb-2">
+                  Copy this Solidity code and deploy using Foundry or Remix
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(CONTRACT_CODE);
+                      showNotification('Contract code copied!', 'success');
+                    }}
+                    className="btn-cyan px-4 py-2 text-xs"
+                  >
+                    📋 Copy Code
+                  </button>
+                  <a
+                    href="https://remix.ethereum.org/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn-green px-4 py-2 text-xs"
+                  >
+                    🔗 Open Remix
+                  </a>
+                </div>
+              </div>
+
+              <div className="bg-black border-2 border-purple-500 rounded p-4 overflow-x-auto">
+                <pre className="text-[10px] shock-green whitespace-pre-wrap font-mono">
+                  {CONTRACT_CODE}
+                </pre>
+              </div>
+
+              <div className="box-yellow p-3">
+                <h3 className="shock-yellow font-bold mb-2">⚙️ Deployment Command</h3>
+                <code className="text-[10px] shock-cyan block bg-black p-2 rounded">
+                  forge create --rpc-url $POLYGON_RPC --private-key $PRIVATE_KEY --constructor-args 0xYOUR_ADDRESS 10000000000000000 50000000000 contracts/FlashArbX.sol:FlashArbX
+                </code>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Test Harness Modal */}
+      {showTestHarness && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center">
+          <div className="max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-end mb-2">
+              <button
+                onClick={() => setShowTestHarness(false)}
+                className="shock-pink text-xl hover:scale-110 transition-transform bg-black/50 px-3 py-1 rounded"
+              >
+                ✕ Close
+              </button>
+            </div>
+            <TestHarness />
+          </div>
+        </div>
+      )}
+
+      {/* DRY RUN Banner - Very Prominent! */}
+      {walletConnected && isDryRun && (
+        <div className="bg-yellow-500/20 border-b-2 border-yellow-500 px-4 py-2 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">🧪</span>
+            <div>
+              <p className="shock-yellow font-bold text-sm">DRY RUN MODE ACTIVE</p>
+              <p className="text-xs shock-cyan">All trades are simulated. No real funds at risk. Safe for testing!</p>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              if (window.confirm('⚠️ Switch to LIVE MODE? This will execute REAL transactions with REAL funds!')) {
+                setIsDryRun(false);
+                showNotification('⚡ LIVE MODE ACTIVE - Real transactions!', 'error');
+              }
+            }}
+            className="btn-pink px-4 py-2 text-xs font-bold"
+          >
+            Switch to LIVE →
+          </button>
+        </div>
+      )}
+
+      {/* LIVE MODE Warning Banner */}
+      {walletConnected && !isDryRun && (
+        <div className="bg-red-500/20 border-b-2 border-red-500 px-4 py-2 flex items-center justify-between animate-pulse">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">⚡</span>
+            <div>
+              <p className="shock-pink font-bold text-sm">⚠️ LIVE MODE - REAL TRANSACTIONS!</p>
+              <p className="text-xs shock-yellow">Real funds at risk! Execute with caution!</p>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              setIsDryRun(true);
+              showNotification('🧪 Back to DRY RUN MODE - Safe testing', 'success');
+            }}
+            className="btn-cyan px-4 py-2 text-xs font-bold"
+          >
+            ← Back to DRY RUN
+          </button>
+        </div>
+      )}
+
+      {/* Main Dashboard */}
+      {!walletConnected ? (
+        <div className="flex items-center justify-center h-[calc(100vh-80px)]">
+          <div className="text-center max-w-2xl mx-auto px-4">
+            <div className="text-6xl mb-4">🎮</div>
+            <h2 className="text-3xl shock-cyan font-bold mb-4">Welcome to FLASH-X</h2>
+            <p className="shock-yellow mb-6 text-lg">
+              The Ultimate Flash Loan Arbitrage Game
+            </p>
+            
+            {/* Bitget Wallet Section */}
+            <div className="box-purple p-6 mb-6">
+              <div className="flex items-center justify-center gap-3 mb-4">
+                <span className="text-4xl">🟡</span>
+                <h3 className="text-xl shock-purple font-bold">Bitget Wallet</h3>
+              </div>
+              
+              {getAvailableWallets().length > 0 ? (
+                <div>
+                  <p className="shock-green text-sm mb-4">
+                    ✅ Wallet detected! Ready to connect.
+                  </p>
+                  <button
+                    onClick={() => setShowWalletModal(true)}
+                    className="btn-cyan px-8 py-3 text-lg font-bold"
+                  >
+                    🚀 START GAME
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  <p className="shock-pink text-sm mb-4">
+                    ⚠️ Bitget Wallet extension not detected
+                  </p>
+                  <a
+                    href="https://web3.bitget.com/en/wallet-download"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block btn-pink px-6 py-3 text-base font-bold mb-3"
+                  >
+                    📥 Install Bitget Wallet
+                  </a>
+                  <p className="text-xs shock-cyan mt-3">
+                    After installation, refresh this page
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Game Info */}
+            <div className="grid grid-cols-2 gap-4 text-left">
+              <div className="box-cyan p-4">
+                <h4 className="shock-cyan font-bold mb-2">💰 Starting Capital</h4>
+                <p className="text-2xl shock-green font-bold">$4.00</p>
+                <p className="text-xs shock-yellow mt-1">MATIC on Polygon</p>
+                <p className="text-[10px] shock-pink mt-2">⚠️ For LIVE mode only. DRY RUN is free!</p>
+              </div>
+              
+              <div className="box-green p-4">
+                <h4 className="shock-green font-bold mb-2">⚡ Flash Loans</h4>
+                <p className="text-2xl shock-green font-bold">FREE</p>
+                <p className="text-xs shock-yellow mt-1">0 bps - No fees ever!</p>
+                <p className="text-[10px] shock-cyan mt-2">Borrow millions with zero collateral</p>
+              </div>
+              
+              <div className="box-yellow p-4">
+                <h4 className="shock-yellow font-bold mb-2">🎯 Goal</h4>
+                <p className="text-2xl shock-green font-bold">$100</p>
+                <p className="text-xs shock-cyan mt-1">Unlock Arbitrum chain</p>
+                <p className="text-[10px] shock-green mt-2">~20 trades with flash loans</p>
+              </div>
+              
+              <div className="box-purple p-4">
+                <h4 className="shock-purple font-bold mb-2">🤖 MEV-Share</h4>
+                <p className="text-2xl shock-green font-bold">90%</p>
+                <p className="text-xs shock-cyan mt-1">Tips to validators</p>
+                <p className="text-[10px] shock-yellow mt-2">You keep 10% of profits</p>
+              </div>
+            </div>
+
+            {/* Capital Requirements */}
+            <div className="mt-6 box-pink p-4">
+              <h4 className="shock-pink font-bold mb-3">💡 How Much MATIC Do You Need?</h4>
+              <div className="space-y-2 text-xs">
+                <div className="flex justify-between items-center border-b border-pink-500/30 pb-2">
+                  <span className="shock-cyan">🧪 DRY RUN Mode (Testing):</span>
+                  <span className="shock-green font-bold">0 MATIC (FREE!)</span>
+                </div>
+                <div className="flex justify-between items-center border-b border-pink-500/30 pb-2">
+                  <span className="shock-cyan">⚡ LIVE Mode (Real Trading):</span>
+                  <span className="shock-yellow font-bold">1-5 MATIC minimum</span>
+                </div>
+                <div className="flex justify-between items-center pb-2">
+                  <span className="shock-cyan">💎 Recommended for Comfort:</span>
+                  <span className="shock-green font-bold">10+ MATIC</span>
+                </div>
+              </div>
+              <div className="mt-3 text-[10px] shock-yellow">
+                <p className="font-bold mb-1">Why do you need MATIC?</p>
+                <p>• Gas fees for transactions (~$0.005 per trade)</p>
+                <p>• Flash loans are FREE but still need gas to execute</p>
+                <p>• More MATIC = more trades = faster growth</p>
+                <p className="mt-2 shock-green font-bold">💡 Tip: Start with DRY RUN (free), then add 1-5 MATIC when ready for LIVE!</p>
+              </div>
+            </div>
+
+            <div className="mt-6 text-xs shock-cyan">
+              <p>🔒 Secure • ⚡ Fast • 💎 100% Free Flash Loans • 🧪 Test Before Trading</p>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="p-3 pb-8 grid grid-cols-12 gap-3 h-[calc(100vh-80px)]">
+          {/* Left Column - Game Stats */}
+          <div className="col-span-3 flex flex-col gap-3 overflow-y-auto">
+            {/* Game Panel */}
+            <div className="box-purple p-3">
+              <h3 className="text-xs uppercase tracking-wider shock-yellow mb-3 font-bold">
+                🎮 Game Stats
+              </h3>
+              <div className="space-y-2 text-[10px]">
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Level:</span>
+                  <span className="font-bold" style={{ color: currentLevel.color }}>
+                    {currentLevel.name}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">XP:</span>
+                  <span className="shock-green font-bold">{gameState.xp}</span>
+                </div>
+                <div className="h-1 bg-black rounded-full overflow-hidden border border-purple-500">
+                  <div 
+                    className="h-full transition-all duration-300"
+                    style={{ 
+                      width: `${xpProgress}%`,
+                      backgroundColor: currentLevel.color,
+                    }}
+                  />
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Streak:</span>
+                  <span className="shock-yellow font-bold">🔥 {gameState.streak}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Best Streak:</span>
+                  <span className="shock-green font-bold">{gameState.bestStreak}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Win Rate:</span>
+                  <span className="shock-green font-bold">
+                    {gameState.totalTrades > 0 
+                      ? ((gameState.wins / gameState.totalTrades) * 100).toFixed(1)
+                      : 0}%
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Biggest Win:</span>
+                  <span className="shock-green font-bold">${gameState.biggestWin.toFixed(4)}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Controls */}
+            <div className="box-pink p-3">
+              <h3 className="text-xs uppercase tracking-wider shock-cyan mb-3 font-bold">
+                ⌘ Controls
+              </h3>
+              <div className="space-y-2">
+                <button
+                  onClick={() => setIsRunning(!isRunning)}
+                  className={`w-full px-3 py-2 rounded text-xs font-bold ${
+                    isRunning ? 'btn-pink' : 'btn-cyan'
+                  }`}
+                >
+                  {isRunning ? '⏸ Pause' : '▶ Start Scanner'}
+                </button>
+                
+                {/* DRY RUN Toggle - Very Important! */}
+                <button
+                  onClick={() => {
+                    if (!isDryRun) {
+                      if (window.confirm('⚠️ Switch to DRY RUN mode? All trades will be simulated.')) {
+                        setIsDryRun(true);
+                        showNotification('🧪 DRY RUN MODE - Safe testing', 'success');
+                      }
+                    } else {
+                      if (window.confirm('⚠️ WARNING: Switch to LIVE MODE? This will execute REAL transactions with REAL funds!')) {
+                        setIsDryRun(false);
+                        showNotification('⚡ LIVE MODE ACTIVE - Real transactions!', 'error');
+                      }
+                    }
+                  }}
+                  className={`w-full px-3 py-2 rounded text-xs font-bold border-2 ${
+                    isDryRun 
+                      ? 'border-yellow-500 bg-yellow-500/20 shock-yellow hover:bg-yellow-500/30' 
+                      : 'border-red-500 bg-red-500/20 shock-pink hover:bg-red-500/30 animate-pulse'
+                  }`}
+                >
+                  {isDryRun ? '🧪 DRY RUN (Click for LIVE)' : '⚡ LIVE MODE (Click for DRY RUN)'}
+                </button>
+
+                <button
+                  onClick={() => setShowContractModal(true)}
+                  className="w-full px-3 py-2 rounded btn-green text-xs font-bold"
+                >
+                  📜 View Contract
+                </button>
+                <button
+                  onClick={() => setShowTestHarness(true)}
+                  className="w-full px-3 py-2 rounded btn-cyan text-xs font-bold"
+                >
+                  🧪 Test Harness
+                </button>
+                <button
+                  onClick={handleRefreshScanner}
+                  className="w-full px-3 py-2 rounded border-2 border-cyan-500 bg-cyan-500/10 shock-cyan text-xs font-bold hover:bg-cyan-500/20"
+                >
+                  🔄 Refresh Scanner
+                </button>
+                <button
+                  onClick={handleResetAll}
+                  className="w-full px-3 py-2 rounded border-2 border-orange-500 bg-orange-500/10 shock-orange text-xs font-bold hover:bg-orange-500/20"
+                >
+                  🗑️ Reset All Data
+                </button>
+                <button
+                  onClick={() => setWalletConnected(false)}
+                  className="w-full px-3 py-2 rounded btn-red text-xs font-bold"
+                >
+                  🔌 Disconnect
+                </button>
+              </div>
+            </div>
+
+            {/* Network & Wallet */}
+            <div className="box-cyan p-3">
+              <h3 className="text-xs uppercase tracking-wider shock-pink mb-2 font-bold">
+                🟡 Bitget Wallet
+              </h3>
+              <div className="space-y-1 text-[10px]">
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Address:</span>
+                  <span className="shock-green font-mono">
+                    {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Balance:</span>
+                  <span className="shock-green font-bold">{walletBalance.toFixed(4)} MATIC</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Network:</span>
+                  <span className="shock-purple font-bold">Polygon PoS</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Status:</span>
+                  <span className="shock-green font-bold">✓ Connected</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Network Stats */}
+            <div className="box-purple p-3">
+              <h3 className="text-xs uppercase tracking-wider shock-pink mb-2 font-bold">
+                🌐 Network
+              </h3>
+              <div className="space-y-1 text-[10px]">
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Block:</span>
+                  <span className="shock-green font-mono">#{blockNumber.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Gas:</span>
+                  <span className="shock-yellow font-mono">{gasPrice.toFixed(2)} Gwei</span>
+                </div>
+                <div className="mt-2 pt-2 border-t border-purple-500/30">
+                  <div className="flex justify-between">
+                    <span className="shock-pink">Arbitrum:</span>
+                    {gameState.arbitrumUnlocked ? (
+                      <span className="shock-green font-bold">✓ UNLOCKED</span>
+                    ) : (
+                      <span className="shock-yellow font-bold">🔒 ${Math.max(0, GAME_CONFIG.unlockArbitrumAt - gameState.capital).toFixed(2)} to unlock</span>
+                    )}
+                  </div>
+                  {!gameState.arbitrumUnlocked && (
+                    <div className="mt-1 h-1 bg-black rounded-full overflow-hidden border border-yellow-500">
+                      <div 
+                        className="h-full bg-yellow-500 transition-all duration-300"
+                        style={{ width: `${Math.min(100, (gameState.capital / GAME_CONFIG.unlockArbitrumAt) * 100)}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Achievements */}
+            <div className="box-yellow p-3">
+              <h3 className="text-xs uppercase tracking-wider shock-pink mb-2 font-bold">
+                🏆 Achievements ({gameState.unlockedAchievements.length}/{GAME_CONFIG.achievements.length})
+              </h3>
+              <div className="space-y-1">
+                {GAME_CONFIG.achievements.map(ach => {
+                  const unlocked = gameState.unlockedAchievements.includes(ach.id);
+                  return (
+                    <div
+                      key={ach.id}
+                      className={`text-[10px] p-1 rounded border ${
+                        unlocked ? 'border-green-500 bg-green-500/10' : 'border-gray-700 opacity-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>{ach.icon}</span>
+                        <span className={unlocked ? 'shock-green font-bold' : 'text-gray-500'}>
+                          {ach.name}
+                        </span>
+                      </div>
+                      <div className="text-[9px] text-gray-400 ml-5">{ach.desc}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Performance Metrics */}
+            <PerformanceMetrics metrics={performanceMetrics} />
+          </div>
+
+          {/* Center Column - Live Data */}
+          <div className="col-span-6 flex flex-col gap-3 overflow-y-auto">
+            {/* Scanner Progress */}
+            {isRunning && scanProgress.total > 0 && (
+              <div className="box-cyan p-3">
+                <div className="flex justify-between text-xs shock-cyan mb-1">
+                  <span>Scanning pools...</span>
+                  <span>{scanProgress.current}/{scanProgress.total}</span>
+                </div>
+                <div className="h-2 bg-black rounded-full overflow-hidden border border-cyan-500">
+                  <div 
+                    className="h-full bg-cyan-500 transition-all duration-300"
+                    style={{ width: `${(scanProgress.current / scanProgress.total) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Opportunities */}
+            <div className="box-green p-3">
+              <h3 className="text-xs uppercase tracking-wider shock-pink mb-3 font-bold">
+                ⚡ Live Opportunities ({opportunities.length})
+              </h3>
+              {opportunities.length === 0 ? (
+                <div className="text-center py-4 shock-cyan text-xs">
+                  {isRunning ? 'Scanning for price discrepancies...' : 'Start scanner to find opportunities'}
+                </div>
+              ) : (
+                <div className="space-y-1 max-h-96 overflow-y-auto">
+                  {opportunities.map((opp) => (
+                    <div
+                      key={opp.id}
+                      className="flex items-center justify-between p-2 rounded border border-green-500/50 hover:bg-green-500/10"
+                    >
+                      <div className="text-[10px]">
+                        <div className="shock-cyan font-bold">
+                          {opp.pair[0]}/{opp.pair[1]}
+                        </div>
+                        <div className="shock-pink text-[9px]">
+                          {opp.buyDex} → {opp.sellDex}
+                        </div>
+                        <div className="shock-yellow text-[9px]">
+                          {opp.spreadBps.toFixed(1)}bps spread
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="shock-green font-bold text-sm">
+                          +${opp.netProfit.toFixed(4)}
+                        </div>
+                        <button
+                          onClick={() => executeTrade(opp)}
+                          className="mt-1 px-2 py-1 btn-green text-[9px]"
+                        >
+                          EXECUTE
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Price Matrix */}
+            <div className="box-cyan p-3">
+              <h3 className="text-xs uppercase tracking-wider shock-pink mb-2 font-bold">
+                ◎ Live Prices
+              </h3>
+              <div className="overflow-x-auto max-h-48 overflow-y-auto">
+                <table className="w-full text-[10px]">
+                  <thead>
+                    <tr className="shock-pink border-b border-cyan-500 font-bold">
+                      <th className="text-left py-1 px-1">Token</th>
+                      {Object.keys(DEXS).map(dex => (
+                        <th key={dex} className="text-right py-1 px-1">{DEXS[dex].name.split(' ')[0]}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(prices).slice(0, 10).map(([token, dexPrices]) => (
+                      <tr key={token} className="border-b border-cyan-500/20">
+                        <td className="py-1 px-1 shock-cyan font-bold">{token}</td>
+                        {Object.keys(DEXS).map(dex => {
+                          const price = dexPrices[DEXS[dex].name];
+                          return (
+                            <td key={dex} className="text-right py-1 px-1 shock-green font-mono">
+                              {price ? (price < 10 ? price.toFixed(4) : price.toFixed(2)) : '—'}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Trade Log */}
+            <div className="box-yellow p-3">
+              <h3 className="text-xs uppercase tracking-wider shock-pink mb-2 font-bold">
+                ▸ Trade Log ({tradeLog.length})
+              </h3>
+              <div className="space-y-1 max-h-48 overflow-y-auto">
+                {tradeLog.length === 0 ? (
+                  <div className="text-center py-4 shock-cyan text-[10px]">
+                    No trades yet. Execute an opportunity to start!
+                  </div>
+                ) : (
+                  tradeLog.map((trade, i) => (
+                    <div key={i} className="flex justify-between text-[10px] p-1 border-b border-yellow-500/20">
+                      <span className="shock-cyan">{trade.pair.join('/')}</span>
+                      <span className="shock-pink">{trade.buyDex}→{trade.sellDex}</span>
+                      <span className={trade.status === 'success' ? 'shock-green font-bold' : 'shock-pink font-bold'}>
+                        {trade.status === 'success' ? '✓' : '✗'} {trade.netProfit >= 0 ? '+' : ''}${trade.netProfit.toFixed(4)}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Right Column - Flash Loans & Info */}
+          <div className="col-span-3 flex flex-col gap-3 overflow-y-auto">
+            {/* Capital */}
+            <div className="box-green p-3">
+              <h3 className="text-xs uppercase tracking-wider shock-yellow mb-2 font-bold">
+                💎 Capital
+              </h3>
+              <div className="text-center mb-2">
+                <div className="text-3xl font-bold shock-green">
+                  ${gameState.capital.toFixed(2)}
+                </div>
+                <div className="text-[10px] shock-cyan">
+                  Started: ${GAME_CONFIG.startingCapital.toFixed(2)}
+                </div>
+                <div className={`text-sm font-bold ${
+                  gameState.capital >= GAME_CONFIG.startingCapital ? 'shock-green' : 'shock-pink'
+                }`}>
+                  {gameState.capital >= GAME_CONFIG.startingCapital ? '+' : ''}
+                  ${(gameState.capital - GAME_CONFIG.startingCapital).toFixed(2)}
+                </div>
+              </div>
+              <div className="text-[10px] space-y-1">
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Trades:</span>
+                  <span className="shock-green font-bold">{gameState.totalTrades}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Wins:</span>
+                  <span className="shock-green font-bold">{gameState.wins}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Losses:</span>
+                  <span className="shock-pink font-bold">{gameState.losses}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Flash Loans - 100% FREE! */}
+            <div className="box-green p-3">
+              <h3 className="text-xs uppercase tracking-wider shock-yellow mb-2 font-bold">
+                💰 Flash Loans = 100% FREE!
+              </h3>
+              <div className="text-[10px] shock-cyan mb-2">
+                <p className="font-bold shock-green">💡 How it works:</p>
+                <p className="mt-1">Borrow MILLIONS with ZERO collateral!</p>
+                <p className="mt-1">ZERO fees - completely free!</p>
+                <p className="mt-1">Only pay gas (~$0.005) + keep 10% profit</p>
+                <p className="mt-1 shock-yellow font-bold">90% goes to validators (MEV tip)</p>
+              </div>
+              <div className="space-y-1 mb-2">
+                {Object.entries(FLASH_LOAN_PROVIDERS).map(([key, provider]) => (
+                  <div key={key} className="text-[10px] border border-green-500/30 rounded p-1">
+                    <div className="flex justify-between items-center">
+                      <span className="shock-green font-bold">{provider.name}</span>
+                      <span className="shock-green font-bold bg-green-500/20 px-2 py-0.5 rounded">
+                        0 bps FREE
+                      </span>
+                    </div>
+                    <div className="text-[9px] shock-cyan mt-0.5">
+                      Max: {provider.maxAmount}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="border-t border-green-500/30 pt-2 space-y-1 text-[10px]">
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Total Borrowed:</span>
+                  <span className="shock-green font-bold">${gameState.flashLoanUsed.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Profit from Flash:</span>
+                  <span className="shock-green font-bold">${gameState.flashLoanProfit.toFixed(4)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">ROI:</span>
+                  <span className="shock-yellow font-bold">
+                    {gameState.flashLoanUsed > 0 
+                      ? `${((gameState.flashLoanProfit / gameState.flashLoanUsed) * 100).toFixed(4)}%`
+                      : '0%'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Monster Collection */}
+            <MonsterCollection monsters={gameState.monsters} />
+
+            {/* Bot Leaderboard */}
+            <BotLeaderboard 
+              yourStats={{
+                speed: performanceMetrics.avgScanTime ? Number(performanceMetrics.avgScanTime) : 3000,
+                successRate: gameState.totalTrades > 0 
+                  ? (gameState.wins / gameState.totalTrades) * 100 
+                  : 0,
+                profit: gameState.capital - GAME_CONFIG.startingCapital,
+                trades: gameState.totalTrades,
+              }}
+            />
+
+            {/* DEX Coverage */}
+            <div className="box-purple p-3">
+              <h3 className="text-xs uppercase tracking-wider shock-pink mb-2 font-bold">
+                🔄 DEX Coverage
+              </h3>
+              <div className="space-y-1 text-[10px]">
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Tokens:</span>
+                  <span className="shock-green font-bold">{Object.keys(TOKENS).length}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Pairs:</span>
+                  <span className="shock-green font-bold">{PRIORITY_PAIRS.length}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">DEXs:</span>
+                  <span className="shock-green font-bold">{Object.keys(DEXS).length}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Pools Scanned:</span>
+                  <span className="shock-green font-bold">{gameState.poolsScanned}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default App;

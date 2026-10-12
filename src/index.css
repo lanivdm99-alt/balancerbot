@@ -1,0 +1,175 @@
+@import "tailwindcss";
+
+/* ═══════════════════════════════════════════════════════════
+   SHOCKING COLORS ON BLACK - Clean, Bold, High Contrast
+   ═══════════════════════════════════════════════════════════ */
+
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #ff0066 #000000;
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: #000000;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: #ff0066;
+    border-radius: 4px;
+  }
+
+  body {
+    background: #000000;
+    color: #ffffff;
+    font-family: 'Courier New', 'Monaco', 'Menlo', monospace;
+    overflow: hidden;
+    min-height: 100vh;
+  }
+}
+
+@layer components {
+  /* ═══════════════════════════════════════════════════════════
+     SHOCKING COLOR CLASSES - No glow, just bold colors
+     ═══════════════════════════════════════════════════════════ */
+
+  .shock-pink {
+    color: #ff0066;
+  }
+
+  .shock-cyan {
+    color: #00ffff;
+  }
+
+  .shock-green {
+    color: #00ff41;
+  }
+
+  .shock-yellow {
+    color: #ffff00;
+  }
+
+  .shock-purple {
+    color: #bf00ff;
+  }
+
+  .shock-orange {
+    color: #ff6600;
+  }
+
+  .shock-purple {
+    color: #bf00ff;
+  }
+
+  /* Box styles - simple borders, no glow */
+  .box-pink {
+    background: #000000;
+    border: 2px solid #ff0066;
+    border-radius: 8px;
+  }
+
+  .box-cyan {
+    background: #000000;
+    border: 2px solid #00ffff;
+    border-radius: 8px;
+  }
+
+  .box-green {
+    background: #000000;
+    border: 2px solid #00ff41;
+    border-radius: 8px;
+  }
+
+  .box-yellow {
+    background: #000000;
+    border: 2px solid #ffff00;
+    border-radius: 8px;
+  }
+
+  .box-purple {
+    background: #000000;
+    border: 2px solid #bf00ff;
+    border-radius: 8px;
+  }
+
+  .box-purple {
+    background: #000000;
+    border: 2px solid #bf00ff;
+    border-radius: 8px;
+  }
+
+  /* Button styles */
+  .btn-pink {
+    background: #ff0066;
+    border: 2px solid #ff0066;
+    color: #ffffff;
+    font-weight: bold;
+    transition: all 0.2s;
+  }
+
+  .btn-pink:hover {
+    background: #ff3388;
+    border-color: #ff3388;
+  }
+
+  .btn-cyan {
+    background: #00ffff;
+    border: 2px solid #00ffff;
+    color: #000000;
+    font-weight: bold;
+    transition: all 0.2s;
+  }
+
+  .btn-cyan:hover {
+    background: #33ffff;
+    border-color: #33ffff;
+  }
+
+  .btn-green {
+    background: #00ff41;
+    border: 2px solid #00ff41;
+    color: #000000;
+    font-weight: bold;
+    transition: all 0.2s;
+  }
+
+  .btn-green:hover {
+    background: #33ff66;
+    border-color: #33ff66;
+  }
+
+  .btn-red {
+    background: #ff0000;
+    border: 2px solid #ff0000;
+    color: #ffffff;
+    font-weight: bold;
+    transition: all 0.2s;
+  }
+
+  .btn-red:hover {
+    background: #ff3333;
+    border-color: #ff3333;
+  }
+
+  /* Status indicators */
+  .status-active {
+    color: #00ff41;
+  }
+
+  .status-paused {
+    color: #ff0066;
+  }
+
+  .status-dry {
+    color: #00ffff;
+  }
+
+  .status-live {
+    color: #ffff00;
+  }
+}
