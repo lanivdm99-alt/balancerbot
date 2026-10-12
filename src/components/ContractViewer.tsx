@@ -422,24 +422,24 @@ export default function ContractViewer() {
   return (
     <div className="p-4 h-[calc(100vh-120px)] flex flex-col">
       <div className="flex items-center gap-4 mb-4">
-        <h2 className="text-lg neon-fluffy-cyan">◈ Source Code</h2>
+        <h2 className="text-lg shock-cyan font-bold">◈ Source Code</h2>
         <div className="flex gap-2">
           <button
             onClick={() => setActiveContract('flashArb')}
-            className={`px-3 py-1 text-xs rounded-lg transition-all ${
+            className={`px-3 py-1 text-xs rounded transition-all ${
               activeContract === 'flashArb'
-                ? 'neon-button-cyan'
-                : 'border border-cyan-500/50 text-cyan-400 hover:bg-cyan-500/10'
+                ? 'btn-cyan'
+                : 'border-2 border-cyan-500 shock-cyan hover:bg-cyan-500/10'
             }`}
           >
             FlashArbX.sol
           </button>
           <button
             onClick={() => setActiveContract('scanner')}
-            className={`px-3 py-1 text-xs rounded-lg transition-all ${
+            className={`px-3 py-1 text-xs rounded transition-all ${
               activeContract === 'scanner'
-                ? 'neon-button-pink'
-                : 'border border-pink-500/50 text-pink-400 hover:bg-pink-500/10'
+                ? 'btn-pink'
+                : 'border-2 border-pink-500 shock-pink hover:bg-pink-500/10'
             }`}
           >
             Scanner.ts
@@ -447,8 +447,8 @@ export default function ContractViewer() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto fluffy-box-cyan">
-        <pre className="p-4 text-[11px] leading-relaxed text-cyan-300 whitespace-pre-wrap font-mono">
+      <div className="flex-1 overflow-auto box-cyan">
+        <pre className="p-4 text-[11px] leading-relaxed shock-cyan whitespace-pre-wrap font-mono">
           {activeContract === 'flashArb' ? FLASH_ARB_CONTRACT : SCANNER_CODE}
         </pre>
       </div>

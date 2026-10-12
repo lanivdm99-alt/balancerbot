@@ -6,17 +6,17 @@ interface ArbOpportunitiesProps {
 
 export default function ArbOpportunities({ opportunities }: ArbOpportunitiesProps) {
   return (
-    <div className="fluffy-box-green p-3">
-      <h3 className="text-xs uppercase tracking-wider neon-fluffy-pink mb-3 flex items-center gap-2">
+    <div className="box-green p-3">
+      <h3 className="text-xs uppercase tracking-wider shock-pink mb-3 flex items-center gap-2 font-bold">
         <span>⚡</span> Arbitrage Opportunities
-        <span className="ml-auto text-[10px] text-pink-400">
+        <span className="ml-auto text-[10px] shock-pink">
           {opportunities.length} detected
         </span>
       </h3>
 
       {opportunities.length === 0 ? (
-        <div className="text-center py-4 text-cyan-400 text-xs">
-          <div className="text-2xl mb-2 neon-fluffy-cyan">⏳</div>
+        <div className="text-center py-4 shock-cyan text-xs">
+          <div className="text-2xl mb-2">⏳</div>
           Scanning for cross-DEX price discrepancies...
         </div>
       ) : (
@@ -24,36 +24,36 @@ export default function ArbOpportunities({ opportunities }: ArbOpportunitiesProp
           {opportunities.map((opp) => (
             <div
               key={opp.id}
-              className={`flex items-center justify-between p-2 rounded-lg border text-[10px] transition-all ${
+              className={`flex items-center justify-between p-2 rounded border text-[10px] ${
                 opp.netProfit > 0.01
-                  ? 'border-green-500/50 bg-green-500/10'
-                  : 'border-yellow-500/50 bg-yellow-500/10'
+                  ? 'border-green-500 bg-green-500/5'
+                  : 'border-yellow-500 bg-yellow-500/5'
               }`}
             >
               <div className="flex items-center gap-2">
                 <span className={`px-1 rounded text-[8px] font-bold ${
-                  opp.chain === 'arbitrum' ? 'bg-cyan-500/20 neon-fluffy-cyan' : 'bg-pink-500/20 neon-fluffy-pink'
+                  opp.chain === 'arbitrum' ? 'shock-cyan' : 'shock-pink'
                 }`}>
                   {opp.chain === 'arbitrum' ? 'ARB' : 'POL'}
                 </span>
-                <span className="text-cyan-300 font-bold">
+                <span className="shock-cyan font-bold">
                   {opp.pair[0]}/{opp.pair[1]}
                 </span>
-                <span className={`text-[8px] px-1 rounded ${
-                  opp.strategy === 'flashbots' ? 'bg-purple-500/20 neon-fluffy-purple' :
-                  opp.strategy === 'triangular' ? 'bg-yellow-500/20 neon-fluffy-yellow' :
-                  'bg-green-500/20 neon-fluffy-green'
+                <span className={`text-[8px] px-1 rounded font-bold ${
+                  opp.strategy === 'flashbots' ? 'shock-purple' :
+                  opp.strategy === 'triangular' ? 'shock-yellow' :
+                  'shock-green'
                 }`}>
                   {opp.strategy}
                 </span>
               </div>
 
               <div className="flex items-center gap-3">
-                <span className="text-pink-400">
+                <span className="shock-pink">
                   {opp.buyDex.split(' ')[0]} → {opp.sellDex.split(' ')[0]}
                 </span>
-                <span className="neon-fluffy-yellow">{opp.spreadBps.toFixed(1)}bps</span>
-                <span className={`font-bold ${opp.netProfit > 0 ? 'neon-fluffy-green' : 'neon-fluffy-pink'}`}>
+                <span className="shock-yellow font-bold">{opp.spreadBps.toFixed(1)}bps</span>
+                <span className={`font-bold ${opp.netProfit > 0 ? 'shock-green' : 'shock-pink'}`}>
                   ${opp.netProfit.toFixed(4)}
                 </span>
               </div>

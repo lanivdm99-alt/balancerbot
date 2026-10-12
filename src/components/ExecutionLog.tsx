@@ -6,10 +6,10 @@ interface ExecutionLogProps {
 
 export default function ExecutionLog({ history }: ExecutionLogProps) {
   return (
-    <div className="fluffy-box-yellow p-3">
-      <h3 className="text-xs uppercase tracking-wider neon-fluffy-pink mb-3 flex items-center gap-2">
+    <div className="box-yellow p-3">
+      <h3 className="text-xs uppercase tracking-wider shock-pink mb-3 flex items-center gap-2 font-bold">
         <span>▸</span> Execution Matrix
-        <span className="ml-auto text-[10px] text-pink-400">
+        <span className="ml-auto text-[10px] shock-pink">
           {history.filter(h => h.status === 'success').length}W / {history.filter(h => h.status === 'failed').length}L
         </span>
       </h3>
@@ -17,7 +17,7 @@ export default function ExecutionLog({ history }: ExecutionLogProps) {
       <div className="overflow-x-auto">
         <table className="w-full text-[10px]">
           <thead>
-            <tr className="text-pink-400 border-b border-yellow-500/30">
+            <tr className="shock-pink border-b border-yellow-500 font-bold">
               <th className="text-left py-1 px-1">Status</th>
               <th className="text-left py-1 px-1">Chain</th>
               <th className="text-left py-1 px-1">Pair</th>
@@ -30,52 +30,52 @@ export default function ExecutionLog({ history }: ExecutionLogProps) {
           <tbody>
             {history.length === 0 ? (
               <tr>
-                <td colSpan={7} className="text-center py-4 text-cyan-400">
+                <td colSpan={7} className="text-center py-4 shock-cyan">
                   Awaiting execution signals...
                 </td>
               </tr>
             ) : (
               history.slice(0, 15).map((entry) => (
-                <tr key={entry.id} className="border-b border-yellow-500/20 hover:bg-yellow-500/10">
+                <tr key={entry.id} className="border-b border-yellow-500/30 hover:bg-yellow-500/10">
                   <td className="py-1 px-1">
                     <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-bold ${
                       entry.status === 'success'
-                        ? 'bg-green-500/20 neon-fluffy-green'
+                        ? 'shock-green'
                         : entry.status === 'failed'
-                        ? 'bg-pink-500/20 neon-fluffy-pink'
-                        : 'bg-yellow-500/20 neon-fluffy-yellow'
+                        ? 'shock-pink'
+                        : 'shock-yellow'
                     }`}>
                       {entry.status === 'success' ? '✓' : entry.status === 'failed' ? '✗' : '◌'}
                       {entry.status.toUpperCase()}
                     </span>
                   </td>
                   <td className="py-1 px-1">
-                    <span className={`px-1 rounded text-[8px] ${
-                      entry.chain === 'arbitrum' ? 'neon-fluffy-cyan' : 'neon-fluffy-pink'
+                    <span className={`px-1 rounded text-[8px] font-bold ${
+                      entry.chain === 'arbitrum' ? 'shock-cyan' : 'shock-pink'
                     }`}>
                       {entry.chain === 'arbitrum' ? 'ARB' : 'POL'}
                     </span>
                   </td>
-                  <td className="py-1 px-1 text-cyan-300 font-bold">
+                  <td className="py-1 px-1 shock-cyan font-bold">
                     {entry.pair.join('/')}
                   </td>
                   <td className="py-1 px-1">
-                    <span className={`text-[8px] px-1 rounded ${
-                      entry.strategy === 'flashbots' ? 'bg-purple-500/20 neon-fluffy-purple' :
-                      entry.strategy === 'triangular' ? 'bg-yellow-500/20 neon-fluffy-yellow' :
-                      'bg-green-500/20 neon-fluffy-green'
+                    <span className={`text-[8px] px-1 rounded font-bold ${
+                      entry.strategy === 'flashbots' ? 'shock-purple' :
+                      entry.strategy === 'triangular' ? 'shock-yellow' :
+                      'shock-green'
                     }`}>
                       {entry.strategy}
                     </span>
                   </td>
-                  <td className="py-1 px-1 text-pink-400">
+                  <td className="py-1 px-1 shock-pink">
                     {entry.buyDex.split(' ')[0]}→{entry.sellDex.split(' ')[0]}
                   </td>
-                  <td className="py-1 px-1 text-right text-cyan-300 font-mono">
+                  <td className="py-1 px-1 text-right shock-cyan font-mono">
                     ${entry.flashLoanAmount.toFixed(2)}
                   </td>
                   <td className={`py-1 px-1 text-right font-mono font-bold ${
-                    entry.netProfit >= 0 ? 'neon-fluffy-green' : 'neon-fluffy-pink'
+                    entry.netProfit >= 0 ? 'shock-green' : 'shock-pink'
                   }`}>
                     {entry.netProfit >= 0 ? '+' : ''}{entry.netProfit.toFixed(5)}
                   </td>
