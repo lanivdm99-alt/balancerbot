@@ -54,7 +54,7 @@ export const DEXS: Record<string, {
 };
 
 // ═══════════════════════════════════════════════════════════
-// FREE FLASH LOANS
+// FREE FLASH LOANS (0 FEES ONLY!)
 // ═══════════════════════════════════════════════════════════
 
 export const FLASH_LOAN_PROVIDERS: Record<string, {
@@ -75,13 +75,18 @@ export const FLASH_LOAN_PROVIDERS: Record<string, {
     fee: 0,
     maxAmount: 'Vault Balance',
   },
-  AaveV3: {
-    name: 'Aave V3',
-    address: '0x794a61358D6845594F94dc1DB02A252b5b4814aD',
-    fee: 5,
-    maxAmount: 'Pool TVL',
+  dYdX: {
+    name: 'dYdX Solo Margin',
+    address: '0x92D6C1e31e14520e676a687F0a93788B716BEff5',
+    fee: 0,
+    maxAmount: 'Vault Balance',
   },
 };
+
+// Helper to get only 0-fee providers
+export function getZeroFeeFlashLoans() {
+  return Object.entries(FLASH_LOAN_PROVIDERS).filter(([_, p]) => p.fee === 0);
+}
 
 // ═══════════════════════════════════════════════════════════
 // TRADING PAIRS

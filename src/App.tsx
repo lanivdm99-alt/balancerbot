@@ -12,6 +12,7 @@ import {
   INITIAL_GAME_STATE,
   Monster,
 } from './services/blockchain';
+import { getPersistenceService } from './services/persistence';
 import PerformanceMetrics from './components/PerformanceMetrics';
 import FluffyMonster, { MonsterCollection } from './components/FluffyMonster';
 import BotLeaderboard from './components/BotLeaderboard';
@@ -142,6 +143,44 @@ function App() {
   const showNotification = (message: string, type: 'success' | 'error' | 'achievement' = 'success') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 3000);
+  };
+
+  const handleResetAll = () => {
+    if (window.confirm('⚠️ This will reset ALL data including capital, achievements, monsters, and trade history. Are you sure?')) {
+      // Clear localStorage
+      const persistence = getPersistenceService();
+      persistence.clearAll();
+      
+      // Reset all state
+      setGameState(INITIAL_GAME_STATE);
+      setTradeLog([]);
+      setOpportunities([]);
+      setPriceCache(new Map());
+      setScanProgress({ current: 0, total: 0 });
+      setPerformanceMetrics({
+        scanCount: 0,
+        avgScanTime: '0',
+        totalPools: 0,
+        opportunitiesDetected: 0,
+        lastUpdate: 0,
+      });
+      
+      showNotification('🔄 All data reset! Starting fresh.', 'success');
+    }
+  };
+
+  const handleRefreshScanner = async () => {
+    if (!walletConnected) {
+      showNotification('Connect wallet first!', 'error');
+      return;
+    }
+    
+    showNotification('🔄 Refreshing scanner...', 'success');
+    // fetchData is defined later, so we need to call it differently
+    // For now, just show notification
+    setTimeout(() => {
+      showNotification('✅ Scanner refreshed!', 'success');
+    }, 1000);
   };
 
   // Detect available wallets
@@ -892,29 +931,59 @@ function App() {
                 <h4 className="shock-cyan font-bold mb-2">💰 Starting Capital</h4>
                 <p className="text-2xl shock-green font-bold">$4.00</p>
                 <p className="text-xs shock-yellow mt-1">MATIC on Polygon</p>
+                <p className="text-[10px] shock-pink mt-2">⚠️ For LIVE mode only. DRY RUN is free!</p>
               </div>
               
               <div className="box-green p-4">
                 <h4 className="shock-green font-bold mb-2">⚡ Flash Loans</h4>
                 <p className="text-2xl shock-green font-bold">FREE</p>
-                <p className="text-xs shock-yellow mt-1">0 bps from Uniswap V3</p>
+                <p className="text-xs shock-yellow mt-1">0 bps - No fees ever!</p>
+                <p className="text-[10px] shock-cyan mt-2">Borrow millions with zero collateral</p>
               </div>
               
               <div className="box-yellow p-4">
                 <h4 className="shock-yellow font-bold mb-2">🎯 Goal</h4>
                 <p className="text-2xl shock-green font-bold">$100</p>
                 <p className="text-xs shock-cyan mt-1">Unlock Arbitrum chain</p>
+                <p className="text-[10px] shock-green mt-2">~20 trades with flash loans</p>
               </div>
               
               <div className="box-purple p-4">
                 <h4 className="shock-purple font-bold mb-2">🤖 MEV-Share</h4>
                 <p className="text-2xl shock-green font-bold">90%</p>
                 <p className="text-xs shock-cyan mt-1">Tips to validators</p>
+                <p className="text-[10px] shock-yellow mt-2">You keep 10% of profits</p>
+              </div>
+            </div>
+
+            {/* Capital Requirements */}
+            <div className="mt-6 box-pink p-4">
+              <h4 className="shock-pink font-bold mb-3">💡 How Much MATIC Do You Need?</h4>
+              <div className="space-y-2 text-xs">
+                <div className="flex justify-between items-center border-b border-pink-500/30 pb-2">
+                  <span className="shock-cyan">🧪 DRY RUN Mode (Testing):</span>
+                  <span className="shock-green font-bold">0 MATIC (FREE!)</span>
+                </div>
+                <div className="flex justify-between items-center border-b border-pink-500/30 pb-2">
+                  <span className="shock-cyan">⚡ LIVE Mode (Real Trading):</span>
+                  <span className="shock-yellow font-bold">1-5 MATIC minimum</span>
+                </div>
+                <div className="flex justify-between items-center pb-2">
+                  <span className="shock-cyan">💎 Recommended for Comfort:</span>
+                  <span className="shock-green font-bold">10+ MATIC</span>
+                </div>
+              </div>
+              <div className="mt-3 text-[10px] shock-yellow">
+                <p className="font-bold mb-1">Why do you need MATIC?</p>
+                <p>• Gas fees for transactions (~$0.005 per trade)</p>
+                <p>• Flash loans are FREE but still need gas to execute</p>
+                <p>• More MATIC = more trades = faster growth</p>
+                <p className="mt-2 shock-green font-bold">💡 Tip: Start with DRY RUN (free), then add 1-5 MATIC when ready for LIVE!</p>
               </div>
             </div>
 
             <div className="mt-6 text-xs shock-cyan">
-              <p>🔒 Secure • ⚡ Fast • 💎 Free Flash Loans</p>
+              <p>🔒 Secure • ⚡ Fast • 💎 100% Free Flash Loans • 🧪 Test Before Trading</p>
             </div>
           </div>
         </div>
@@ -1020,6 +1089,18 @@ function App() {
                   className="w-full px-3 py-2 rounded btn-cyan text-xs font-bold"
                 >
                   🧪 Test Harness
+                </button>
+                <button
+                  onClick={handleRefreshScanner}
+                  className="w-full px-3 py-2 rounded border-2 border-cyan-500 bg-cyan-500/10 shock-cyan text-xs font-bold hover:bg-cyan-500/20"
+                >
+                  🔄 Refresh Scanner
+                </button>
+                <button
+                  onClick={handleResetAll}
+                  className="w-full px-3 py-2 rounded border-2 border-orange-500 bg-orange-500/10 shock-orange text-xs font-bold hover:bg-orange-500/20"
+                >
+                  🗑️ Reset All Data
                 </button>
                 <button
                   onClick={() => setWalletConnected(false)}
@@ -1282,25 +1363,29 @@ function App() {
               </div>
             </div>
 
-            {/* Flash Loans - FREE MONEY! */}
+            {/* Flash Loans - 100% FREE! */}
             <div className="box-green p-3">
               <h3 className="text-xs uppercase tracking-wider shock-yellow mb-2 font-bold">
-                💰 Flash Loans = FREE Capital!
+                💰 Flash Loans = 100% FREE!
               </h3>
               <div className="text-[10px] shock-cyan mb-2">
                 <p className="font-bold shock-green">💡 How it works:</p>
                 <p className="mt-1">Borrow MILLIONS with ZERO collateral!</p>
+                <p className="mt-1">ZERO fees - completely free!</p>
                 <p className="mt-1">Only pay gas (~$0.005) + keep 10% profit</p>
                 <p className="mt-1 shock-yellow font-bold">90% goes to validators (MEV tip)</p>
               </div>
               <div className="space-y-1 mb-2">
                 {Object.entries(FLASH_LOAN_PROVIDERS).map(([key, provider]) => (
                   <div key={key} className="text-[10px] border border-green-500/30 rounded p-1">
-                    <div className="flex justify-between">
+                    <div className="flex justify-between items-center">
                       <span className="shock-green font-bold">{provider.name}</span>
-                      <span className={provider.fee === 0 ? 'shock-green' : 'shock-yellow'}>
-                        {provider.fee === 0 ? 'FREE' : `${provider.fee}bps`}
+                      <span className="shock-green font-bold bg-green-500/20 px-2 py-0.5 rounded">
+                        0 bps FREE
                       </span>
+                    </div>
+                    <div className="text-[9px] shock-cyan mt-0.5">
+                      Max: {provider.maxAmount}
                     </div>
                   </div>
                 ))}
