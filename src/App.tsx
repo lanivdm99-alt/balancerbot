@@ -1,52 +1,127 @@
 import { useState, useEffect, useRef } from 'react';
 import { blockchainService } from './services/scanner';
-import { ArbOpportunity, PriceQuote, FLASH_LOAN_PROVIDERS, DEXS, TOKENS, PRIORITY_PAIRS } from './services/blockchain';
-import SpeedIndicator from './components/SpeedIndicator';
-import Header from './components/Header';
-import GasTracker from './components/GasTracker';
-import PriceMatrix from './components/PriceMatrix';
-import ArbOpportunities from './components/ArbOpportunities';
-import PnLDashboard from './components/PnLDashboard';
-import ExecutionLog from './components/ExecutionLog';
-import ControlPanel from './components/ControlPanel';
-import NetworkStatus from './components/NetworkStatus';
-import ContractViewer from './components/ContractViewer';
-import StatusBar from './components/StatusBar';
-import FlashLoanPanel from './components/FlashLoanPanel';
-import DexPanel from './components/DexPanel';
-import CapitalPanel from './components/CapitalPanel';
+import {
+  ArbOpportunity,
+  PriceQuote,
+  FLASH_LOAN_PROVIDERS,
+  DEXS,
+  TOKENS,
+  PRIORITY_PAIRS,
+  GAME_CONFIG,
+  GameState,
+  INITIAL_GAME_STATE,
+} from './services/blockchain';
 
 function App() {
-  const [isRunning, setIsRunning] = useState(true);
-  const [isDryRun, setIsDryRun] = useState(true);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'contracts' | 'setup' | 'docs'>('dashboard');
+  const [isRunning, setIsRunning] = useState(false);
+  const [walletConnected, setWalletConnected] = useState(false);
+  const [walletAddress, setWalletAddress] = useState('');
+  const [walletBalance, setWalletBalance] = useState(0);
   const [blockNumber, setBlockNumber] = useState(0);
   const [gasPrice, setGasPrice] = useState(0);
   const [opportunities, setOpportunities] = useState<ArbOpportunity[]>([]);
-  const [executionHistory, setExecutionHistory] = useState<ArbOpportunity[]>([]);
   const [priceCache, setPriceCache] = useState<Map<string, PriceQuote>>(new Map());
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [gameState, setGameState] = useState<GameState>(INITIAL_GAME_STATE);
+  const [tradeLog, setTradeLog] = useState<ArbOpportunity[]>([]);
   const [scanProgress, setScanProgress] = useState({ current: 0, total: 0 });
-  const [pnl, setPnl] = useState(0);
-  const [scanDuration, setScanDuration] = useState(0);
-  
-  // Capital management for $4 starting capital
-  const STARTING_CAPITAL = 4.00;
-  const [currentCapital, setCurrentCapital] = useState(STARTING_CAPITAL);
-  const [transactionsUsed, setTransactionsUsed] = useState(0);
+  const [showWalletModal, setShowWalletModal] = useState(false);
+  const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' | 'achievement' } | null>(null);
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Fetch real blockchain data
-  const fetchBlockchainData = async () => {
-    if (!isRunning) return;
+  const showNotification = (message: string, type: 'success' | 'error' | 'achievement' = 'success') => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 3000);
+  };
+
+  // Connect Bitget Wallet
+  const connectWallet = async () => {
+    if (typeof window !== 'undefined' && (window as any).bitkeep?.ethereum) {
+      try {
+        const provider = (window as any).bitkeep.ethereum;
+        const accounts = await provider.request({ method: 'eth_requestAccounts' });
+        if (accounts.length > 0) {
+          setWalletAddress(accounts[0]);
+          const balance = await blockchainService.getWalletBalance(accounts[0]);
+          setWalletBalance(balance);
+          setWalletConnected(true);
+          setShowWalletModal(false);
+          showNotification('Bitget Wallet Connected!', 'success');
+        }
+      } catch (err) {
+        showNotification('Failed to connect wallet', 'error');
+      }
+    } else if (typeof window !== 'undefined' && (window as any).ethereum) {
+      try {
+        const provider = (window as any).ethereum;
+        const accounts = await provider.request({ method: 'eth_requestAccounts' });
+        if (accounts.length > 0) {
+          setWalletAddress(accounts[0]);
+          const balance = await blockchainService.getWalletBalance(accounts[0]);
+          setWalletBalance(balance);
+          setWalletConnected(true);
+          setShowWalletModal(false);
+          showNotification('Wallet Connected!', 'success');
+        }
+      } catch (err) {
+        showNotification('Failed to connect wallet', 'error');
+      }
+    } else {
+      showNotification('No wallet detected. Install Bitget Wallet!', 'error');
+    }
+  };
+
+  // Check achievements
+  const checkAchievements = (state: GameState): GameState => {
+    const newState = { ...state };
+    const newAchievements: string[] = [];
+
+    const checks: { id: string; condition: boolean; message: string }[] = [
+      { id: 'first_trade', condition: state.totalTrades >= 1, message: '🎯 First Blood!' },
+      { id: 'ten_wins', condition: state.streak >= 10, message: '🔥 Hot Streak!' },
+      { id: 'profit_10', condition: state.capital >= 10, message: '💰 Double Down!' },
+      { id: 'profit_50', condition: state.capital >= 50, message: '💎 Half Way!' },
+      { id: 'profit_100', condition: state.capital >= 100, message: '👑 Century Club!' },
+      { id: 'big_fish', condition: state.biggestWin >= 0.50, message: '🐋 Big Fish!' },
+      { id: 'speed_demon', condition: state.tradesThisMinute >= 5, message: '⚡ Speed Demon!' },
+      { id: 'scanner', condition: state.poolsScanned >= 1000, message: '🔍 Pool Scanner!' },
+      { id: 'arbitrum_unlock', condition: state.arbitrumUnlocked, message: '🌐 Multi-Chain Unlocked!' },
+    ];
+
+    for (const check of checks) {
+      if (check.condition && !state.unlockedAchievements.includes(check.id)) {
+        newState.unlockedAchievements = [...newState.unlockedAchievements, check.id];
+        newAchievements.push(check.message);
+      }
+    }
+
+    // Unlock Arbitrum at $100
+    if (state.capital >= GAME_CONFIG.unlockArbitrumAt && !state.arbitrumUnlocked) {
+      newState.arbitrumUnlocked = true;
+      showNotification('🌐 ARBITRUM UNLOCKED! Multi-chain mode activated!', 'achievement');
+    }
+
+    if (newAchievements.length > 0) {
+      showNotification(newAchievements[0], 'achievement');
+    }
+
+    return newState;
+  };
+
+  // Calculate level from XP
+  const getLevel = (xp: number) => {
+    let level = GAME_CONFIG.levels[0];
+    for (const l of GAME_CONFIG.levels) {
+      if (xp >= l.xpRequired) level = l;
+    }
+    return level;
+  };
+
+  // Fetch blockchain data
+  const fetchData = async () => {
+    if (!isRunning || !walletConnected) return;
 
     try {
-      setIsLoading(true);
-      setError(null);
-
-      // Fetch block number and gas price
       const [block, gas] = await Promise.all([
         blockchainService.getBlockNumber(),
         blockchainService.getGasPrice(),
@@ -55,47 +130,97 @@ function App() {
       setBlockNumber(block);
       setGasPrice(gas);
 
-      // Fetch all pool prices with progress
-      const startTime = Date.now();
+      // Update wallet balance
+      if (walletAddress) {
+        const balance = await blockchainService.getWalletBalance(walletAddress);
+        setWalletBalance(balance);
+      }
+
+      // Fetch prices
       const prices = await blockchainService.fetchAllPrices((current, total) => {
         setScanProgress({ current, total });
       });
       setPriceCache(prices);
-      setScanDuration(Date.now() - startTime);
 
-      // Detect arbitrage opportunities
+      // Update pools scanned
+      setGameState(prev => ({
+        ...prev,
+        poolsScanned: prev.poolsScanned + prices.size,
+      }));
+
+      // Detect opportunities
       const opps = blockchainService.detectArbitrage();
       setOpportunities(opps);
-
-      // Simulate execution in dry run mode
-      if (isDryRun && opps.length > 0) {
-        const success = Math.random() > 0.15;
-        const executedOpp = {
-          ...opps[0],
-          status: success ? 'success' as const : 'failed' as const,
-          netProfit: success ? opps[0].netProfit : -opps[0].gasCost * 0.1,
-        };
-        setExecutionHistory(prev => [executedOpp, ...prev].slice(0, 50));
-        setPnl(prev => prev + executedOpp.netProfit);
-        
-        // Update capital tracking
-        setCurrentCapital(prev => prev + executedOpp.netProfit);
-        setTransactionsUsed(prev => prev + 1);
-      }
-
-      setIsLoading(false);
     } catch (err) {
-      console.error('Error fetching blockchain data:', err);
-      setError('Failed to fetch blockchain data. Check your RPC connection.');
-      setIsLoading(false);
+      console.error('Fetch error:', err);
     }
   };
 
-  // Start/stop polling
+  // Execute a trade (simulated for now)
+  const executeTrade = (opp: ArbOpportunity) => {
+    if (!walletConnected) {
+      showNotification('Connect your wallet first!', 'error');
+      return;
+    }
+
+    const success = Math.random() > 0.2; // 80% success rate
+    const profit = success ? opp.netProfit : -opp.gasCost;
+    
+    const executedOpp = {
+      ...opp,
+      status: success ? 'success' as const : 'failed' as const,
+      netProfit: profit,
+    };
+
+    setTradeLog(prev => [executedOpp, ...prev].slice(0, 50));
+
+    setGameState(prev => {
+      let newState = {
+        ...prev,
+        capital: prev.capital + profit,
+        totalTrades: prev.totalTrades + 1,
+        wins: success ? prev.wins + 1 : prev.wins,
+        losses: !success ? prev.losses + 1 : prev.losses,
+        streak: success ? prev.streak + 1 : 0,
+        bestStreak: success ? Math.max(prev.bestStreak, prev.streak + 1) : prev.bestStreak,
+        biggestWin: profit > prev.biggestWin ? profit : prev.biggestWin,
+        xp: prev.xp + (success ? GAME_CONFIG.xpPerWin : GAME_CONFIG.xpPerTrade / 2),
+        tradesThisMinute: prev.tradesThisMinute + 1,
+        lastTradeTime: Date.now(),
+      };
+
+      // Big win bonus XP
+      if (profit > 0.10) {
+        newState.xp += GAME_CONFIG.xpPerBigWin;
+      }
+
+      // Calculate level
+      const currentLevel = getLevel(newState.xp);
+      newState.level = currentLevel.level;
+
+      // Check achievements
+      newState = checkAchievements(newState);
+
+      return newState;
+    });
+
+    // Reset trades per minute counter every minute
+    setTimeout(() => {
+      setGameState(prev => ({ ...prev, tradesThisMinute: 0 }));
+    }, 60000);
+
+    if (success) {
+      showNotification(`+$${profit.toFixed(4)} profit!`, 'success');
+    } else {
+      showNotification(`-$${Math.abs(profit).toFixed(4)} gas burned`, 'error');
+    }
+  };
+
+  // Start/stop scanning
   useEffect(() => {
-    if (isRunning) {
-      fetchBlockchainData();
-      intervalRef.current = setInterval(fetchBlockchainData, 5000); // Poll every 5 seconds (faster!)
+    if (isRunning && walletConnected) {
+      fetchData();
+      intervalRef.current = setInterval(fetchData, 5000);
     } else {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
@@ -107,14 +232,14 @@ function App() {
         clearInterval(intervalRef.current);
       }
     };
-  }, [isRunning, isDryRun]);
+  }, [isRunning, walletConnected]);
 
-  const handleKillSwitch = () => {
-    setIsRunning(false);
-    setTimeout(() => setIsRunning(true), 3000);
-  };
+  const currentLevel = getLevel(gameState.xp);
+  const nextLevel = GAME_CONFIG.levels.find(l => l.level === currentLevel.level + 1);
+  const xpProgress = nextLevel 
+    ? ((gameState.xp - currentLevel.xpRequired) / (nextLevel.xpRequired - currentLevel.xpRequired)) * 100
+    : 100;
 
-  // Convert price cache to format expected by components
   const prices = Array.from(priceCache.values()).reduce((acc, quote) => {
     if (!acc[quote.tokenA]) acc[quote.tokenA] = {};
     acc[quote.tokenA][quote.dex] = quote.priceAinB;
@@ -122,62 +247,268 @@ function App() {
   }, {} as Record<string, Record<string, number>>);
 
   return (
-    <div className="min-h-screen bg-black overflow-hidden">
-      <Header isRunning={isRunning} isDryRun={isDryRun} />
-
-      <div className="border-b-2 border-pink-500 px-4">
-        <div className="flex gap-1">
-          {(['dashboard', 'contracts', 'setup', 'docs'] as const).map(tab => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-4 py-2 text-sm uppercase tracking-wider transition-all font-bold ${
-                activeTab === tab
-                  ? 'btn-cyan text-xs'
-                  : 'shock-cyan hover:bg-cyan-500/10'
-              }`}
-            >
-              {tab === 'dashboard' ? '⌘ Terminal' : tab === 'contracts' ? '◈ Contracts' : tab === 'setup' ? '⚙ Setup' : '⊞ Docs'}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {error && (
-        <div className="bg-red-900/20 border-2 border-red-500 p-3 m-3 rounded">
-          <p className="shock-pink font-bold">{error}</p>
+    <div className="min-h-screen bg-black overflow-hidden text-white">
+      {/* Notification */}
+      {notification && (
+        <div className={`fixed top-4 right-4 z-50 p-4 rounded-lg border-2 font-bold animate-pulse ${
+          notification.type === 'success' ? 'border-green-500 bg-green-500/20 shock-green' :
+          notification.type === 'error' ? 'border-pink-500 bg-pink-500/20 shock-pink' :
+          'border-yellow-500 bg-yellow-500/20 shock-yellow'
+        }`}>
+          {notification.message}
         </div>
       )}
 
-      {activeTab === 'dashboard' && (
-        <div className="p-3 pb-8 grid grid-cols-12 gap-3 h-[calc(100vh-120px)]">
-          <div className="col-span-3 flex flex-col gap-3 overflow-y-auto">
-            <ControlPanel
-              isRunning={isRunning}
-              isDryRun={isDryRun}
-              onToggleRunning={() => setIsRunning(!isRunning)}
-              onToggleDryRun={() => setIsDryRun(!isDryRun)}
-              onKillSwitch={handleKillSwitch}
-            />
-            <NetworkStatus
-              blockNumber={blockNumber}
-              gasPrice={gasPrice}
-              isLoading={isLoading}
-            />
-            <GasTracker gasPrice={gasPrice} />
-            <SpeedIndicator scanDuration={scanDuration} poolCount={priceCache.size} />
-            <FlashLoanPanel providers={FLASH_LOAN_PROVIDERS} />
-            <DexPanel dexs={DEXS} tokenCount={Object.keys(TOKENS).length} pairCount={PRIORITY_PAIRS.length} />
-            <CapitalPanel 
-              startingCapital={STARTING_CAPITAL}
-              currentCapital={currentCapital}
-              gasPrice={gasPrice}
-              transactionsRemaining={Math.max(0, Math.floor(currentCapital / 0.005))}
-            />
+      {/* Header */}
+      <div className="border-b-2 border-pink-500 px-4 py-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <pre className="text-[10px] leading-none hidden sm:block shock-pink font-bold">
+{`███████╗██╗      █████╗ ███████╗  ██████╗  ╔═╗╔═╗╔═╗
+██╔════╝██║     ██╔══██╗██╔════╝  ██╔══██╗ ║╠═╝║╠═╝╚═╗
+█████╗  ██║     ███████║███████╗  ██████╔╝ ║╚═╗║╚═╗╔═╝
+██╔══╝  ██║     ██╔══██║╚════██║  ██╔══██╗ ╚═══╝╚══╝╚═╝
+██║     ███████╗██║  ██║███████║  ██║  ██║
+╚═╝     ╚══════╝╚═╝  ╚═╝╚══════╝  ╚═╝  ╚═╝`}
+            </pre>
+            <div className="sm:hidden">
+              <span className="text-xl font-bold shock-pink">FLASH-X</span>
+            </div>
           </div>
 
+          <div className="flex items-center gap-3">
+            {/* Level Badge */}
+            <div className="px-3 py-1 border-2 rounded" style={{ borderColor: currentLevel.color }}>
+              <span className="text-xs font-bold" style={{ color: currentLevel.color }}>
+                LVL {currentLevel.level} {currentLevel.name}
+              </span>
+            </div>
+
+            {/* Capital */}
+            <div className="px-3 py-1 border-2 border-green-500 rounded">
+              <span className="text-xs font-bold shock-green">
+                💎 ${gameState.capital.toFixed(2)}
+              </span>
+            </div>
+
+            {/* Wallet */}
+            {walletConnected ? (
+              <div className="px-3 py-1 border-2 border-cyan-500 rounded">
+                <span className="text-xs font-bold shock-cyan">
+                  {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
+                </span>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowWalletModal(true)}
+                className="px-3 py-1 btn-pink text-xs"
+              >
+                Connect Wallet
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Wallet Modal */}
+      {showWalletModal && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center">
+          <div className="box-cyan p-6 max-w-md w-full mx-4">
+            <h2 className="text-xl shock-cyan font-bold mb-4">🔗 Connect Wallet</h2>
+            <p className="shock-yellow text-sm mb-4">
+              Link your Bitget Wallet to start trading
+            </p>
+            <button
+              onClick={connectWallet}
+              className="w-full btn-cyan py-3 text-sm font-bold mb-2"
+            >
+              🦊 Connect Bitget Wallet
+            </button>
+            <button
+              onClick={() => setShowWalletModal(false)}
+              className="w-full py-2 text-xs shock-pink hover:underline"
+            >
+              Cancel
+            </button>
+            <p className="text-[10px] shock-pink mt-4">
+              ⚠️ Make sure your wallet is on Polygon network
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Main Dashboard */}
+      {!walletConnected ? (
+        <div className="flex items-center justify-center h-[calc(100vh-80px)]">
+          <div className="text-center">
+            <div className="text-6xl mb-4">🎮</div>
+            <h2 className="text-3xl shock-cyan font-bold mb-4">Welcome to FLASH-X</h2>
+            <p className="shock-yellow mb-6">The Ultimate Flash Loan Arbitrage Game</p>
+            <button
+              onClick={() => setShowWalletModal(true)}
+              className="btn-pink px-8 py-3 text-lg font-bold"
+            >
+              🚀 START GAME - Connect Wallet
+            </button>
+            <div className="mt-8 text-sm shock-cyan">
+              <p>Starting Capital: <span className="shock-green font-bold">$4.00</span></p>
+              <p>Chain: <span className="shock-green font-bold">Polygon PoS</span></p>
+              <p>Flash Loans: <span className="shock-green font-bold">FREE</span></p>
+              <p className="mt-2 shock-yellow">🔒 Arbitrum unlocks at $100</p>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="p-3 pb-8 grid grid-cols-12 gap-3 h-[calc(100vh-80px)]">
+          {/* Left Column - Game Stats */}
+          <div className="col-span-3 flex flex-col gap-3 overflow-y-auto">
+            {/* Game Panel */}
+            <div className="box-purple p-3">
+              <h3 className="text-xs uppercase tracking-wider shock-yellow mb-3 font-bold">
+                🎮 Game Stats
+              </h3>
+              <div className="space-y-2 text-[10px]">
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Level:</span>
+                  <span className="font-bold" style={{ color: currentLevel.color }}>
+                    {currentLevel.name}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">XP:</span>
+                  <span className="shock-green font-bold">{gameState.xp}</span>
+                </div>
+                <div className="h-1 bg-black rounded-full overflow-hidden border border-purple-500">
+                  <div 
+                    className="h-full transition-all duration-300"
+                    style={{ 
+                      width: `${xpProgress}%`,
+                      backgroundColor: currentLevel.color,
+                    }}
+                  />
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Streak:</span>
+                  <span className="shock-yellow font-bold">🔥 {gameState.streak}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Best Streak:</span>
+                  <span className="shock-green font-bold">{gameState.bestStreak}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Win Rate:</span>
+                  <span className="shock-green font-bold">
+                    {gameState.totalTrades > 0 
+                      ? ((gameState.wins / gameState.totalTrades) * 100).toFixed(1)
+                      : 0}%
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Biggest Win:</span>
+                  <span className="shock-green font-bold">${gameState.biggestWin.toFixed(4)}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Controls */}
+            <div className="box-pink p-3">
+              <h3 className="text-xs uppercase tracking-wider shock-cyan mb-3 font-bold">
+                ⌘ Controls
+              </h3>
+              <div className="space-y-2">
+                <button
+                  onClick={() => setIsRunning(!isRunning)}
+                  className={`w-full px-3 py-2 rounded text-xs font-bold ${
+                    isRunning ? 'btn-pink' : 'btn-cyan'
+                  }`}
+                >
+                  {isRunning ? '⏸ Pause' : '▶ Start Scanner'}
+                </button>
+                <button
+                  onClick={() => setWalletConnected(false)}
+                  className="w-full px-3 py-2 rounded btn-red text-xs font-bold"
+                >
+                  🔌 Disconnect
+                </button>
+              </div>
+            </div>
+
+            {/* Network */}
+            <div className="box-cyan p-3">
+              <h3 className="text-xs uppercase tracking-wider shock-pink mb-2 font-bold">
+                🌐 Network
+              </h3>
+              <div className="space-y-1 text-[10px]">
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Polygon:</span>
+                  <span className="shock-green font-bold">✓ Active</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Block:</span>
+                  <span className="shock-green font-mono">#{blockNumber.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Gas:</span>
+                  <span className="shock-yellow font-mono">{gasPrice.toFixed(2)} Gwei</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Wallet:</span>
+                  <span className="shock-green font-mono">{walletBalance.toFixed(4)} MATIC</span>
+                </div>
+                <div className="mt-2 pt-2 border-t border-cyan-500/30">
+                  <div className="flex justify-between">
+                    <span className="shock-pink">Arbitrum:</span>
+                    {gameState.arbitrumUnlocked ? (
+                      <span className="shock-green font-bold">✓ UNLOCKED</span>
+                    ) : (
+                      <span className="shock-yellow font-bold">🔒 ${GAME_CONFIG.unlockArbitrumAt - gameState.capital > 0 ? (GAME_CONFIG.unlockArbitrumAt - gameState.capital).toFixed(2) : '0'} to unlock</span>
+                    )}
+                  </div>
+                  {!gameState.arbitrumUnlocked && (
+                    <div className="mt-1 h-1 bg-black rounded-full overflow-hidden border border-yellow-500">
+                      <div 
+                        className="h-full bg-yellow-500 transition-all duration-300"
+                        style={{ width: `${Math.min(100, (gameState.capital / GAME_CONFIG.unlockArbitrumAt) * 100)}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Achievements */}
+            <div className="box-yellow p-3">
+              <h3 className="text-xs uppercase tracking-wider shock-pink mb-2 font-bold">
+                🏆 Achievements ({gameState.unlockedAchievements.length}/{GAME_CONFIG.achievements.length})
+              </h3>
+              <div className="space-y-1">
+                {GAME_CONFIG.achievements.map(ach => {
+                  const unlocked = gameState.unlockedAchievements.includes(ach.id);
+                  return (
+                    <div
+                      key={ach.id}
+                      className={`text-[10px] p-1 rounded border ${
+                        unlocked ? 'border-green-500 bg-green-500/10' : 'border-gray-700 opacity-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>{ach.icon}</span>
+                        <span className={unlocked ? 'shock-green font-bold' : 'text-gray-500'}>
+                          {ach.name}
+                        </span>
+                      </div>
+                      <div className="text-[9px] text-gray-400 ml-5">{ach.desc}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* Center Column - Live Data */}
           <div className="col-span-6 flex flex-col gap-3 overflow-y-auto">
-            {isLoading && scanProgress.total > 0 && (
+            {/* Scanner Progress */}
+            {isRunning && scanProgress.total > 0 && (
               <div className="box-cyan p-3">
                 <div className="flex justify-between text-xs shock-cyan mb-1">
                   <span>Scanning pools...</span>
@@ -191,222 +522,193 @@ function App() {
                 </div>
               </div>
             )}
-            <PriceMatrix prices={prices} />
-            <ArbOpportunities opportunities={opportunities} />
-            <ExecutionLog history={executionHistory} />
+
+            {/* Opportunities */}
+            <div className="box-green p-3">
+              <h3 className="text-xs uppercase tracking-wider shock-pink mb-3 font-bold">
+                ⚡ Live Opportunities ({opportunities.length})
+              </h3>
+              {opportunities.length === 0 ? (
+                <div className="text-center py-4 shock-cyan text-xs">
+                  {isRunning ? 'Scanning for price discrepancies...' : 'Start scanner to find opportunities'}
+                </div>
+              ) : (
+                <div className="space-y-1 max-h-96 overflow-y-auto">
+                  {opportunities.map((opp) => (
+                    <div
+                      key={opp.id}
+                      className="flex items-center justify-between p-2 rounded border border-green-500/50 hover:bg-green-500/10"
+                    >
+                      <div className="text-[10px]">
+                        <div className="shock-cyan font-bold">
+                          {opp.pair[0]}/{opp.pair[1]}
+                        </div>
+                        <div className="shock-pink text-[9px]">
+                          {opp.buyDex} → {opp.sellDex}
+                        </div>
+                        <div className="shock-yellow text-[9px]">
+                          {opp.spreadBps.toFixed(1)}bps spread
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="shock-green font-bold text-sm">
+                          +${opp.netProfit.toFixed(4)}
+                        </div>
+                        <button
+                          onClick={() => executeTrade(opp)}
+                          className="mt-1 px-2 py-1 btn-green text-[9px]"
+                        >
+                          EXECUTE
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Price Matrix */}
+            <div className="box-cyan p-3">
+              <h3 className="text-xs uppercase tracking-wider shock-pink mb-2 font-bold">
+                ◎ Live Prices
+              </h3>
+              <div className="overflow-x-auto max-h-48 overflow-y-auto">
+                <table className="w-full text-[10px]">
+                  <thead>
+                    <tr className="shock-pink border-b border-cyan-500 font-bold">
+                      <th className="text-left py-1 px-1">Token</th>
+                      {Object.keys(DEXS).map(dex => (
+                        <th key={dex} className="text-right py-1 px-1">{DEXS[dex].name.split(' ')[0]}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(prices).slice(0, 10).map(([token, dexPrices]) => (
+                      <tr key={token} className="border-b border-cyan-500/20">
+                        <td className="py-1 px-1 shock-cyan font-bold">{token}</td>
+                        {Object.keys(DEXS).map(dex => {
+                          const price = dexPrices[DEXS[dex].name];
+                          return (
+                            <td key={dex} className="text-right py-1 px-1 shock-green font-mono">
+                              {price ? (price < 10 ? price.toFixed(4) : price.toFixed(2)) : '—'}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Trade Log */}
+            <div className="box-yellow p-3">
+              <h3 className="text-xs uppercase tracking-wider shock-pink mb-2 font-bold">
+                ▸ Trade Log ({tradeLog.length})
+              </h3>
+              <div className="space-y-1 max-h-48 overflow-y-auto">
+                {tradeLog.length === 0 ? (
+                  <div className="text-center py-4 shock-cyan text-[10px]">
+                    No trades yet. Execute an opportunity to start!
+                  </div>
+                ) : (
+                  tradeLog.map((trade, i) => (
+                    <div key={i} className="flex justify-between text-[10px] p-1 border-b border-yellow-500/20">
+                      <span className="shock-cyan">{trade.pair.join('/')}</span>
+                      <span className="shock-pink">{trade.buyDex}→{trade.sellDex}</span>
+                      <span className={trade.status === 'success' ? 'shock-green font-bold' : 'shock-pink font-bold'}>
+                        {trade.status === 'success' ? '✓' : '✗'} {trade.netProfit >= 0 ? '+' : ''}${trade.netProfit.toFixed(4)}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
 
+          {/* Right Column - Flash Loans & Info */}
           <div className="col-span-3 flex flex-col gap-3 overflow-y-auto">
-            <PnLDashboard history={executionHistory} />
+            {/* Capital */}
+            <div className="box-green p-3">
+              <h3 className="text-xs uppercase tracking-wider shock-yellow mb-2 font-bold">
+                💎 Capital
+              </h3>
+              <div className="text-center mb-2">
+                <div className="text-3xl font-bold shock-green">
+                  ${gameState.capital.toFixed(2)}
+                </div>
+                <div className="text-[10px] shock-cyan">
+                  Started: ${GAME_CONFIG.startingCapital.toFixed(2)}
+                </div>
+                <div className={`text-sm font-bold ${
+                  gameState.capital >= GAME_CONFIG.startingCapital ? 'shock-green' : 'shock-pink'
+                }`}>
+                  {gameState.capital >= GAME_CONFIG.startingCapital ? '+' : ''}
+                  ${(gameState.capital - GAME_CONFIG.startingCapital).toFixed(2)}
+                </div>
+              </div>
+              <div className="text-[10px] space-y-1">
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Trades:</span>
+                  <span className="shock-green font-bold">{gameState.totalTrades}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Wins:</span>
+                  <span className="shock-green font-bold">{gameState.wins}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Losses:</span>
+                  <span className="shock-pink font-bold">{gameState.losses}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Flash Loans */}
+            <div className="box-green p-3">
+              <h3 className="text-xs uppercase tracking-wider shock-yellow mb-2 font-bold">
+                💰 Free Flash Loans
+              </h3>
+              <div className="space-y-1">
+                {Object.entries(FLASH_LOAN_PROVIDERS).map(([key, provider]) => (
+                  <div key={key} className="text-[10px] border border-green-500/30 rounded p-1">
+                    <div className="flex justify-between">
+                      <span className="shock-green font-bold">{provider.name}</span>
+                      <span className={provider.fee === 0 ? 'shock-green' : 'shock-yellow'}>
+                        {provider.fee === 0 ? 'FREE' : `${provider.fee}bps`}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* DEX Coverage */}
+            <div className="box-purple p-3">
+              <h3 className="text-xs uppercase tracking-wider shock-pink mb-2 font-bold">
+                🔄 DEX Coverage
+              </h3>
+              <div className="space-y-1 text-[10px]">
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Tokens:</span>
+                  <span className="shock-green font-bold">{Object.keys(TOKENS).length}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Pairs:</span>
+                  <span className="shock-green font-bold">{PRIORITY_PAIRS.length}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">DEXs:</span>
+                  <span className="shock-green font-bold">{Object.keys(DEXS).length}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="shock-cyan">Pools Scanned:</span>
+                  <span className="shock-green font-bold">{gameState.poolsScanned}</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}
-
-      {activeTab === 'contracts' && <ContractViewer />}
-      {activeTab === 'setup' && <SetupGuide />}
-      {activeTab === 'docs' && <DocsViewer />}
-
-      <StatusBar
-        isRunning={isRunning}
-        isDryRun={isDryRun}
-        opportunities={opportunities.length}
-        executions={executionHistory.length}
-        pnl={pnl}
-        capital={currentCapital}
-      />
-    </div>
-  );
-}
-
-function SetupGuide() {
-  return (
-    <div className="p-6 max-w-4xl mx-auto overflow-y-auto h-[calc(100vh-120px)]">
-      <h2 className="text-2xl shock-cyan font-bold mb-6">⚙ Setup Guide</h2>
-
-      <div className="space-y-6 text-sm">
-        <section className="box-green p-4">
-          <h3 className="text-lg shock-yellow font-bold mb-3">✓ What You Have</h3>
-          <div className="space-y-2 shock-cyan">
-            <div className="flex items-center gap-2">
-              <span className="shock-green font-bold">✓</span>
-              <span>Polygon PoS RPC Endpoint (Alchemy)</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="shock-green font-bold">✓</span>
-              <span>Real-time Uniswap V3 Pool Prices</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="shock-green font-bold">✓</span>
-              <span>{Object.keys(DEXS).length} DEX Exchanges Monitored</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="shock-green font-bold">✓</span>
-              <span>{Object.keys(TOKENS).length} Tokens Tracked</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="shock-green font-bold">✓</span>
-              <span>{PRIORITY_PAIRS.length} Trading Pairs Scanned</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="shock-green font-bold">✓</span>
-              <span>{Object.keys(FLASH_LOAN_PROVIDERS).length} Free Flash Loan Providers</span>
-            </div>
-          </div>
-        </section>
-
-        <section className="box-purple p-4">
-          <h3 className="text-lg shock-yellow font-bold mb-3">💎 $4 Starting Capital Strategy</h3>
-          <div className="space-y-3 shock-cyan text-xs">
-            <div className="border-l-2 border-purple-500 pl-3">
-              <p className="shock-green font-bold mb-1">✓ Your Budget</p>
-              <p>$4.00 MATIC on Polygon PoS</p>
-              <p className="shock-yellow mt-1">≈ 800 transactions @ $0.005 avg gas</p>
-            </div>
-            
-            <div className="border-l-2 border-purple-500 pl-3">
-              <p className="shock-green font-bold mb-1">✓ Flash Loans = FREE Capital</p>
-              <p>Borrow up to pool liquidity (no collateral needed)</p>
-              <p className="shock-yellow mt-1">Only pay gas (~$0.005) + MEV tip (90% of profit)</p>
-            </div>
-
-            <div className="border-l-2 border-purple-500 pl-3">
-              <p className="shock-green font-bold mb-1">✓ Minimum Profitable Trade</p>
-              <p>Need &gt; $0.01 profit after gas + MEV tip</p>
-              <p className="shock-yellow mt-1">Target: $0.01-0.05 per successful trade</p>
-            </div>
-
-            <div className="border-l-2 border-purple-500 pl-3">
-              <p className="shock-green font-bold mb-1">✓ Growth Path</p>
-              <div className="grid grid-cols-3 gap-2 mt-1">
-                <div className="text-center">
-                  <div className="shock-pink font-bold">$4</div>
-                  <div className="text-[9px]">Start</div>
-                </div>
-                <div className="text-center">
-                  <div className="shock-yellow font-bold">$10</div>
-                  <div className="text-[9px]">~120 trades</div>
-                </div>
-                <div className="text-center">
-                  <div className="shock-green font-bold">$50</div>
-                  <div className="text-[9px]">~600 trades</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="border-l-2 border-pink-500 pl-3 bg-pink-500/10 p-2 rounded">
-              <p className="shock-pink font-bold mb-1">⚠️ Critical Rules</p>
-              <ul className="list-disc list-inside space-y-1">
-                <li>Start in DRY RUN mode (no real transactions)</li>
-                <li>Only execute trades with &gt; $0.01 net profit</li>
-                <li>Monitor gas prices (skip if &gt; 50 Gwei)</li>
-                <li>Stop if capital drops below $1</li>
-              </ul>
-            </div>
-          </div>
-        </section>
-
-        <section className="box-cyan p-4">
-          <h3 className="text-lg shock-yellow font-bold mb-3">💰 Free Flash Loans (2026)</h3>
-          <div className="space-y-2 shock-cyan text-xs">
-            {Object.entries(FLASH_LOAN_PROVIDERS).filter(([_, p]) => p.status === 'active').map(([key, provider]) => (
-              <div key={key} className="flex justify-between border-b border-cyan-500/30 pb-1">
-                <span className="font-bold">{provider.name}</span>
-                <span className={provider.fee === 0 ? 'shock-green font-bold' : 'shock-yellow'}>
-                  {provider.fee === 0 ? 'FREE (0 bps)' : `${provider.fee} bps`}
-                </span>
-              </div>
-            ))}
-          </div>
-          <div className="mt-3 pt-2 border-t border-pink-500/30">
-            <p className="text-[10px] shock-pink font-bold">⚠ Deprecated (Do NOT use):</p>
-            {Object.entries(FLASH_LOAN_PROVIDERS).filter(([_, p]) => p.status === 'deprecated').map(([key, provider]) => (
-              <div key={key} className="text-[10px] text-gray-500 line-through mt-1">
-                {provider.name} - Exploited in Nov 2025
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="box-pink p-4">
-          <h3 className="text-lg shock-yellow font-bold mb-3">⚠ What You Still Need for Live Trading</h3>
-          <div className="space-y-4">
-            <div>
-              <p className="shock-pink font-bold mb-2">1. Arbitrum RPC Endpoint</p>
-              <div className="shock-cyan text-xs">
-                <p>Get from Alchemy or Infura for cross-chain arbitrage</p>
-              </div>
-            </div>
-            <div>
-              <p className="shock-pink font-bold mb-2">2. Private Key (Hot Wallet)</p>
-              <div className="shock-cyan text-xs">
-                <p className="shock-yellow">⚠️ USE A DEDICATED WALLET - Never your main wallet!</p>
-                <code className="block bg-black p-2 rounded border border-pink-500 mt-1">cast wallet new</code>
-              </div>
-            </div>
-            <div>
-              <p className="shock-pink font-bold mb-2">3. Flashbots Signer Key</p>
-              <div className="shock-cyan text-xs">
-                <p>Register at https://flashbots.net for private transactions</p>
-              </div>
-            </div>
-            <div>
-              <p className="shock-pink font-bold mb-2">4. Deploy Smart Contract</p>
-              <div className="shock-cyan text-xs">
-                <code className="block bg-black p-2 rounded border border-pink-500">
-                  forge script script/Deploy.s.sol --rpc-url $POL_RPC_URL --broadcast --verify
-                </code>
-              </div>
-            </div>
-          </div>
-        </section>
-      </div>
-    </div>
-  );
-}
-
-function DocsViewer() {
-  return (
-    <div className="p-6 max-w-4xl mx-auto overflow-y-auto h-[calc(100vh-120px)]">
-      <h2 className="text-2xl shock-cyan font-bold mb-6">⊞ System Documentation</h2>
-
-      <div className="space-y-6 text-sm">
-        <section className="box-pink p-4">
-          <h3 className="text-lg shock-yellow font-bold mb-3">▸ Multi-DEX Architecture</h3>
-          <div className="space-y-2 shock-cyan text-xs">
-            <p className="font-bold">Supported DEXs on Polygon:</p>
-            {Object.entries(DEXS).map(([key, dex]) => (
-              <div key={key} className="border-b border-pink-500/30 pb-1">
-                <span className="shock-pink font-bold">{dex.name}</span>
-                <span className="ml-2">Fee tiers: {dex.fees.map(f => `${f/10000}%`).join(', ')}</span>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="box-cyan p-4">
-          <h3 className="text-lg shock-yellow font-bold mb-3">▸ Free Flash Loan Providers</h3>
-          <div className="space-y-2 shock-cyan text-xs">
-            {Object.entries(FLASH_LOAN_PROVIDERS).map(([key, provider]) => (
-              <div key={key} className="border-b border-cyan-500/30 pb-2">
-                <p className="shock-green font-bold">{provider.name} - {provider.fee === 0 ? 'FREE' : `${provider.fee} bps`}</p>
-                <p className="mt-1">Contract: {provider.address}</p>
-                <p>Max Amount: {provider.maxAmount}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="box-green p-4">
-          <h3 className="text-lg shock-yellow font-bold mb-3">▸ Trading Pairs ({PRIORITY_PAIRS.length})</h3>
-          <div className="grid grid-cols-3 gap-2 shock-cyan text-xs">
-            {PRIORITY_PAIRS.map(([a, b], i) => (
-              <div key={i} className="border border-green-500/30 rounded p-1 text-center">
-                {a}/{b}
-              </div>
-            ))}
-          </div>
-        </section>
-      </div>
     </div>
   );
 }
