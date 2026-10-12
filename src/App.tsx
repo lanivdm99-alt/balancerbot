@@ -11,6 +11,7 @@ import {
   GameState,
   INITIAL_GAME_STATE,
 } from './services/blockchain';
+import PerformanceMetrics from './components/PerformanceMetrics';
 
 const CONTRACT_CODE = `// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
@@ -123,6 +124,13 @@ function App() {
   const [showContractModal, setShowContractModal] = useState(false);
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' | 'achievement' } | null>(null);
   const [isDryRun, setIsDryRun] = useState(true); // ✅ DRY RUN MODE - Safe testing first!
+  const [performanceMetrics, setPerformanceMetrics] = useState({
+    scanCount: 0,
+    avgScanTime: '0',
+    totalPools: 0,
+    opportunitiesDetected: 0,
+    lastUpdate: 0,
+  });
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -371,6 +379,10 @@ function App() {
       // Detect opportunities
       const opps = blockchainService.detectArbitrage();
       setOpportunities(opps);
+      
+      // Update performance metrics
+      const metrics = blockchainService.getPerformanceMetrics();
+      setPerformanceMetrics(metrics);
     } catch (err) {
       console.error('Fetch error:', err);
     }
@@ -1017,6 +1029,9 @@ function App() {
                 })}
               </div>
             </div>
+
+            {/* Performance Metrics */}
+            <PerformanceMetrics metrics={performanceMetrics} />
           </div>
 
           {/* Center Column - Live Data */}
